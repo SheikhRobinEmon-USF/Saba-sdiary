@@ -3,7 +3,7 @@ Created by Sheldon B. Michaels; SVG font conversion by Windell H. Oskay (Evil Ma
 A derivative of Allura, Copyright 2010 The Allura Project Authors (https://github.com/googlefonts/allura), designed by Rob Leuschke, TypeSETit.
 EMSAllure.svg was obtained from the `hersheytext` npm package (MIT-licensed package; the font itself is under the OFL).
 
-Modifications for Saba's Diary (scripts/build-hand-font.mjs): stroke direction/order corrections, smoothing,
+Modifications for Saba's Personal Diary (scripts/build-hand-font.mjs): stroke direction/order corrections, smoothing,
 synthesized glyphs (curly single quotes, ellipsis, Latin Extended-A accents), and a derived outline font named
 "Scribe Hand" (not using the Reserved Font Name). Both derived files remain under the SIL Open Font License 1.1.
 

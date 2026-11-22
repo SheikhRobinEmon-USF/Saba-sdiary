@@ -1,4 +1,4 @@
-# Saba's Diary
+# Saba's Personal Diary
 
 *Every thought deserves to be written beautifully.*
 

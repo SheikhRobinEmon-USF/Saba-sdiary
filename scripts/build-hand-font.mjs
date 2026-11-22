@@ -331,7 +331,7 @@ const toEm = ([x, y]) => [Math.round(x), Math.round(-y)]; // font units, y down
 const fmt = (p) => `${p[0]} ${p[1]}`;
 
 const json = {
-  source: 'EMS Allure (SIL OFL 1.1) — single-line derivative of Allura; strokes re-ordered and smoothed for Saba\'s Diary',
+  source: 'EMS Allure (SIL OFL 1.1) — single-line derivative of Allura; strokes re-ordered and smoothed for Saba\'s Personal Diary',
   unitsPerEm: UPM,
   ascender: ASCENDER / UPM,
   descender: DESCENDER / UPM,
@@ -376,7 +376,7 @@ const font = new opentype.Font({
   ascender: ASCENDER,
   descender: -DESCENDER,
   designer: 'Sheldon B. Michaels (EMS Allure), after Rob Leuschke (Allura)',
-  manufacturer: "Saba's Diary",
+  manufacturer: "Saba's Personal Diary",
   license: 'SIL Open Font License 1.1',
   licenseURL: 'https://openfontlicense.org',
   copyright: 'Copyright 2010 The Allura Project Authors; single-line EMS Allure by Sheldon B. Michaels',

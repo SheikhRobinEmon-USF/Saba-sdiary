@@ -71,7 +71,7 @@ export function parseBackup(json: string): ValidationResult {
     return { ok: false, error: 'That file is not valid JSON.' };
   }
   if (!raw || typeof raw !== 'object' || (raw as Record<string, unknown>).format !== BACKUP_FORMAT) {
-    return { ok: false, error: "That file is not a backup from Saba's Diary." };
+    return { ok: false, error: "That file is not a backup from Saba's Personal Diary." };
   }
   return validateDocument(raw);
 }

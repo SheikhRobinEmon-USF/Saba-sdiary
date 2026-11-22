@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Procedural "engraving" artwork for Saba's Diary.
+ * Procedural "engraving" artwork for Saba's Personal Diary.
  *
  * Every asset is drawn from code with a seeded random generator, so the art is
  * original, reproducible and licence-clean. Style: fine sepia line work,

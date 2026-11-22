@@ -4,7 +4,7 @@
  */
 export const journalConfig = {
   /** Shown in the masthead and the browser tab. */
-  appName: "Saba's Diary",
+  appName: "Saba's Personal Diary",
   /** Small line under the name. */
   tagline: 'a personal diary · every thought deserves to be written beautifully',
   /** Optional recipient name. Leave empty ('') to omit it everywhere. */
@@ -31,7 +31,7 @@ export const journalConfig = {
   /** LocalStorage document key (versioned). */
   storageKey: 'the-scribe:v1',
   /** File name stem for exports. */
-  exportFileStem: 'sabas-diary',
+  exportFileStem: 'sabas-personal-diary',
 } as const;
 
 export type JournalConfig = typeof journalConfig;
