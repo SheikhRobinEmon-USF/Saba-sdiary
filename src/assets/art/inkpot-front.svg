@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 170" width="170" height="170">
+<defs>
+<radialGradient id="ink" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#4a3128"/><stop offset=".6" stop-color="#2a1a14"/><stop offset="1" stop-color="#140c09"/></radialGradient>
+<linearGradient id="glass" x1="0" x2="1"><stop offset="0" stop-color="#d8c6a6" stop-opacity=".28"/><stop offset=".3" stop-color="#fff8ea" stop-opacity=".16"/><stop offset=".7" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#8d7356" stop-opacity=".3"/></linearGradient>
+</defs>
+<path d="M51 46 A34 9 0 0 0 119 46 L115 50 L115 62 L55 62 L55 50Z" fill="url(#ink)"/>
+<path d="M51 46 A34 9 0 0 0 119 46 L115 50 L115 62 L55 62 L55 50Z" fill="url(#glass)"/>
+<path d="M51 46 A34 9 0 0 0 119 46" fill="none" stroke="#392a24" stroke-width="1.3"/>
+<path d="M51 46 A34 9 0 0 0 119 46 A29 6.2 0 0 1 51 46Z" fill="#eadbc0" stroke="#392a24" stroke-width=".8"/>
+</svg>
