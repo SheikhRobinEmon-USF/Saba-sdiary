@@ -41,10 +41,12 @@ export default function WaxSeal({ onOpen }: Props) {
           opacity=".95"
         />
         <path d="M60 86 C46 76 30 66 30 50 C30 40 37 33 45 33" fill="none" stroke="#c07d8f" strokeWidth="1.2" opacity=".7" />
-        {/* tiny rose emboss */}
-        <g transform="translate(60 56)" fill="none" stroke="#3e1b26" strokeWidth="1.1" opacity=".75" strokeLinecap="round">
-          <path d="M0 -8 C6 -8 8 -2 6 2 C4 6 -3 7 -6 3 C-9 -1 -6 -6 -1 -5 C3 -4 3 1 0 2" />
-          <path d="M-2 9 C-1 13 0 16 0 18 M0 14 C3 12 6 12 8 13 M0 15 C-3 13 -6 13 -8 14" />
+        {/* a little cat face pressed into the wax */}
+        <g transform="translate(60 58)" fill="none" stroke="#3e1b26" strokeWidth="1.3" opacity=".78" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M-12 -6 L-11 -17 L-4 -10 C-1.5 -11 1.5 -11 4 -10 L11 -17 L12 -6 C13.5 2 8 8 0 8 C-8 8 -13.5 2 -12 -6 Z" />
+          <path d="M-6 -2 Q-4 0 -2 -2 M2 -2 Q4 0 6 -2" />
+          <path d="M-1.4 2 L1.4 2 L0 3.6 Z" fill="#3e1b26" />
+          <path d="M-5 4 L-14 3 M-5 5.5 L-13 7 M5 4 L14 3 M5 5.5 L13 7" strokeWidth=".8" />
         </g>
         {/* gloss */}
         <path d="M30 34 C36 26 46 24 52 28" fill="none" stroke="#f4dce1" strokeWidth="3" strokeLinecap="round" opacity=".45" />

@@ -20,9 +20,13 @@ A private, single-page diary that feels like an antique scholar's writing desk: 
 - **Saves locally**, automatically (debounced ~300 ms, flushed on blur/page hide) into one versioned LocalStorage document. Reloads restore text, title and settings immediately — no replay.
 - **Exports:** *Save as PDF* (print dialog, paginated, handwriting font, parchment background, title/date/dedication), plain text (exact text), and a versioned JSON backup that can be imported again after validation and confirmation.
 - **Ink colours:** sepia, iron-gall black, burgundy rose — recolours existing writing; fresh ink dries from a wet tone.
-- **Romance:** dedication in the masthead, a pressed rose and petals, a paw print and heart in the margin, and a heart-shaped wax seal that opens a hidden note.
-- **Two cats on the desk** — a cream tabby with a dusty-pink ribbon and a little tuxedo with a burgundy ribbon and bell — drawn as jointed line-art puppets and run by a small behaviour director modelled on real cat behaviour: sleeping curled up, loafing, slow "cat-kiss" blinks, kneading ("making biscuits"), licking a paw and washing the face, yawning, the play-bow and hind-leg stretch, ear twitches, tail swishes, head tilts, batting a paw, the butt-wiggle pounce, strolling along the desk, walking over to nuzzle each other (a heart rises), grooming each other and curling up to nap together. They breathe, blink and follow the quill with their eyes. Tap a cat (or focus it and press Enter) to wake her or say hello. While you are typing they only do calm, in-place things and never walk across the page; with reduced motion they hold still.
-- **Respectful by default:** sound is off until you turn it on; reduced-motion users get instant ink; everything can be muted or calmed.
+- **Romance:** a pressed rose and petals, a trail of paw prints and a heart in the margin, and a heart-shaped wax seal (with a little cat face pressed into it) that opens a hidden note. An optional dedication line can be set in `journalConfig` (currently switched off).
+- **Two cats on the desk** — a cream tabby with a dusty-pink ribbon and a little tuxedo with a burgundy ribbon and bell — drawn as jointed line-art puppets and run by a behaviour director modelled on real cat behaviour: sleeping curled up, loafing, slow "cat-kiss" blinks, kneading ("making biscuits"), licking a paw and washing the face, yawning, the play-bow and hind-leg stretch, ear twitches, tail swishes, head tilts, batting, the butt-wiggle pounce, meowing, strolling and trotting along the desk (leaving fading paw prints), nuzzling each other (a heart rises), grooming each other and curling up to nap together. They breathe, blink, and follow the quill — or a rolling ball — with their eyes. Every joint follows its target through a soft spring, walks speed up and slow down, legs move with the distance covered, and turning around is animated.
+- **Their things to play with:** a **ball of yarn** (tap it to roll it, or drag and let go to throw it — a cat will sprint after it and pounce; arrow keys roll it too), a **cat house** with a heart-shaped door (tap to invite a cat in for a nap — her eyes glow in the doorway — or to wake her), a **cardboard box** (if it fits, she sits), and a **food bowl** of fishy treats that empties as they eat (tap to refill; a hungry cat with an empty bowl sits and asks). Tap a cat, or focus it and press Enter, to wake her or say hello.
+- **Calm while writing:** while you type, the cats only do quiet, in-place things and never walk across the page; with reduced motion they hold still. Settings offer *Playful*, *Calm* or *Hidden* cats.
+- **Cat touches everywhere:** cats dozing on the library bookshelf with tails dangling, a cat-face mark beside the title, a paw-print save indicator, a cat-face favicon.
+- **Sound (off until you turn it on):** soft quill scratches, an inkpot plip, purrs and chirps when you greet a cat, plus an optional **music-box lullaby with an occasional meow** from one of the cats (her mouth moves as she meows; never while you are typing). All of it is synthesised in the browser — there are no audio files — and one tap mutes everything.
+- **Respectful by default:** reduced-motion users get instant ink and still cats; everything can be muted, calmed or hidden.
 
 ## Privacy
 
@@ -70,7 +74,7 @@ Real form controls with visible focus, a skip link to the page, named buttons (i
 ## Tests
 
 - **Unit (Vitest, 18 tests):** text diff (incl. randomized round-trips and surrogate pairs), grapheme segmentation, glyph coverage and stroke data, document/backup validation and sanitising, preferences.
-- **Browser (Playwright, Chromium, 27 tests):** acceptance tests A01–A12 + A14 — nib tracking during writing, exact text after fast typing / 1,000+ character paste / mid-text edits / undo / redo, line returns without connecting ink, resize while writing, phone layout, IME composition, reload without replay, storage-full and corrupt-data handling, exact `.txt`/`.json` exports, paginated print/PDF, validated import with confirmation, new-page confirmation with backup, cross-tab conflict, both cats reacting to tap/Enter, the cats' full repertoire, cats staying calm while typing and never blocking the page, wax seal, sound opt-in and mute, reduced motion, keyboard-only use and accessible names, no network leakage, and screenshots at 360/390/768/1024/1440 px with overflow checks. Every writing test ends with an engine **audit** that re-measures the layout and checks each grapheme has exactly one correctly placed glyph.
+- **Browser (Playwright, Chromium, 29 tests):** acceptance tests A01–A12 + A14 — nib tracking during writing, exact text after fast typing / 1,000+ character paste / mid-text edits / undo / redo, line returns without connecting ink, resize while writing, phone layout, IME composition, reload without replay, storage-full and corrupt-data handling, exact `.txt`/`.json` exports, paginated print/PDF, validated import with confirmation, new-page confirmation with backup, cross-tab conflict, both cats reacting to tap/Enter, the cats' full repertoire, playing with the yarn / house / box / bowl, the Playful / Calm / Hidden cat setting, cats staying calm while typing and never blocking the page, wax seal, sound opt-in and mute, reduced motion, keyboard-only use and accessible names, no network leakage, and screenshots at 360/390/768/1024/1440 px with overflow checks. Every writing test ends with an engine **audit** that re-measures the layout and checks each grapheme has exactly one correctly placed glyph.
 
 Only Chromium is automated here; Safari/Firefox and real mobile keyboards should be spot-checked by hand.
 
@@ -81,9 +85,9 @@ src/
   App.tsx                    composition, dialogs, exports, preferences
   config/journalConfig.ts    personal content (name, dedication, love note)
   handwriting/               engine, glyph data, diff, graphemes
-  cats/                      cat rig (poses), behaviour director, action key poses
+  cats/                      cat rig (poses), behaviour director with springs, toys logic, action key poses
   components/                DeskScene, NotebookEditor, Quill, Inkpot, CatsLayer, CatCompanion,
-                             WaxSeal, Dedication, Toolbar, Modal, PrintSheet, Icons
+                             CatToys, WaxSeal, Dedication, Toolbar, Modal, PrintSheet, Icons
   hooks/useJournalStorage.ts versioned LocalStorage document
   lib/                       exportJournal, journalDocument, preferences, sound
   assets/art/                generated engraved SVG artwork
@@ -98,7 +102,7 @@ tests/unit, tests/e2e        Vitest and Playwright suites
 - Code: MIT (see `LICENSE`).
 - Handwriting strokes: **EMS Allure** by Sheldon B. Michaels (single-line derivative of *Allura* by Rob Leuschke, TypeSETit), SVG conversion by Windell H. Oskay — **SIL Open Font License 1.1** (`vendor/ems-allure/OFL.txt`). The derived *Scribe Hand* font and stroke data are distributed under the same licence.
 - **Cormorant Garamond** and **IM Fell English** — SIL OFL 1.1, bundled locally via Fontsource.
-- All artwork (quill, inkpot, desk and library, rose, petals, botanicals, wax seal, cat, icons) is original, generated from code in this repository. Sounds are synthesised in the browser; there are no audio files.
+- All artwork (quill, inkpot, desk and library, rose, petals, botanicals, wax seal, cat, icons) is original, generated from code in this repository. Sounds, the lullaby (an original melody) and the meows are synthesised in the browser; there are no audio files.
 
 ## Scope notes
 

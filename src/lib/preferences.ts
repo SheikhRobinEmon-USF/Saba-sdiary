@@ -1,11 +1,15 @@
 export type InkName = 'sepia' | 'black' | 'rose';
 export type MotionPref = 'auto' | 'animated' | 'instant';
+export type CatMood = 'lively' | 'calm' | 'hidden';
 
 export interface Preferences {
   ink: InkName;
   sound: boolean;
   motion: MotionPref;
   ambience: boolean;
+  /** Music-box lullaby and the cats' occasional meows (only while sound is on). */
+  music: boolean;
+  cats: CatMood;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -13,6 +17,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   sound: false,
   motion: 'auto',
   ambience: true,
+  music: true,
+  cats: 'lively',
 };
 
 export const INKS: Record<InkName, { label: string; dry: string; wet: string }> = {
@@ -31,6 +37,8 @@ export function sanitizePreferences(raw: unknown): Preferences {
     if (typeof r.sound === 'boolean') p.sound = r.sound;
     if (r.motion === 'auto' || r.motion === 'animated' || r.motion === 'instant') p.motion = r.motion;
     if (typeof r.ambience === 'boolean') p.ambience = r.ambience;
+    if (typeof r.music === 'boolean') p.music = r.music;
+    if (r.cats === 'lively' || r.cats === 'calm' || r.cats === 'hidden') p.cats = r.cats;
   }
   return p;
 }

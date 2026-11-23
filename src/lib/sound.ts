@@ -10,10 +10,164 @@ class SoundBoard {
   private enabled = false;
   private lastScratch = 0;
 
+  private ambient = false;
+  private musicTimer = 0;
+  private musicNext = 0;
+  private musicStep = 0;
+  private musicBus: GainNode | null = null;
+
   setEnabled(on: boolean): void {
     this.enabled = on;
     if (on) this.ensure();
     else if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend();
+    this.syncMusic();
+  }
+
+  /** The music-box lullaby (and the cats' periodic meows) — only while sound is on. */
+  setAmbient(on: boolean): void {
+    this.ambient = on;
+    this.syncMusic();
+  }
+
+  get ambientOn(): boolean {
+    return this.enabled && this.ambient;
+  }
+
+  private syncMusic(): void {
+    const want = this.enabled && this.ambient;
+    if (want && !this.musicTimer) {
+      const ctx = this.ensure();
+      if (!ctx || !this.master) return;
+      if (!this.musicBus) {
+        // music-box bus with a soft echo
+        this.musicBus = ctx.createGain();
+        this.musicBus.gain.value = 0.0001;
+        const delay = ctx.createDelay(1);
+        delay.delayTime.value = 0.27;
+        const fb = ctx.createGain();
+        fb.gain.value = 0.28;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 2400;
+        this.musicBus.connect(this.master);
+        this.musicBus.connect(delay);
+        delay.connect(lp).connect(fb).connect(delay);
+        lp.connect(this.master);
+      }
+      this.musicBus.gain.cancelScheduledValues(ctx.currentTime);
+      this.musicBus.gain.setTargetAtTime(0.16, ctx.currentTime, 0.8);
+      this.musicNext = ctx.currentTime + 0.3;
+      this.musicTimer = window.setInterval(() => this.scheduleMusic(), 120);
+    } else if (!want && this.musicTimer) {
+      clearInterval(this.musicTimer);
+      this.musicTimer = 0;
+      if (this.ctx && this.musicBus) this.musicBus.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.3);
+    }
+  }
+
+  /**
+   * An original little lullaby in C-major pentatonic, played like a music box:
+   * melody over a slow bass, with a rest between phrases. Scheduled ahead.
+   */
+  private static readonly TUNE: (number | null)[] = [
+    72, 76, 79, 76, 74, 72, 69, 72, 67, 69, 72, 76, 74, null, null, null,
+    76, 79, 81, 79, 76, 74, 72, 74, 76, 72, 69, 67, 72, null, null, null,
+    79, 81, 84, 81, 79, 76, 74, 76, 72, 74, 76, 79, 76, null, 74, null,
+    72, 69, 67, 69, 72, 74, 76, 74, 72, 69, 67, 69, 72, null, null, null,
+    null, null, null, null, null, null, null, null,
+  ];
+  private static readonly BASS = [48, 45, 41, 43, 48, 45, 43, 48, 45, 41, 43, 45, 41, 43, 48, 48, 48, 48];
+
+  private scheduleMusic(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicBus) return;
+    const beat = 0.46;
+    while (this.musicNext < ctx.currentTime + 0.6) {
+      const tune = SoundBoard.TUNE;
+      const i = this.musicStep % tune.length;
+      const n = tune[i];
+      if (n !== null) this.bell(n, this.musicNext, 0.09);
+      if (i % 4 === 0) {
+        const b = SoundBoard.BASS[Math.floor(i / 4) % SoundBoard.BASS.length];
+        if (tune[i] !== null || i < 64) this.bell(b, this.musicNext, 0.05, 2.4);
+      }
+      this.musicNext += beat;
+      this.musicStep++;
+    }
+  }
+
+  private bell(midi: number, at: number, vol: number, decay = 1.6): void {
+    const ctx = this.ctx!;
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+    g.connect(this.musicBus!);
+    for (const [mult, amp] of [
+      [1, 1],
+      [2.0, 0.28],
+      [3.01, 0.12],
+    ] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f * mult;
+      const og = ctx.createGain();
+      og.gain.value = amp;
+      o.connect(og).connect(g);
+      o.start(at);
+      o.stop(at + decay + 0.05);
+    }
+  }
+
+  /** A small "mi-a-ow": pitch glide through shifting vowel formants. */
+  meow(variant = 0): void {
+    if (!this.enabled) return;
+    const ctx = this.ensure();
+    if (!ctx || !this.master) return;
+    const now = ctx.currentTime + 0.02;
+    const pitch = variant === 1 ? 1.22 : 1;
+    const dur = 0.62 + Math.random() * 0.15;
+    const src = ctx.createOscillator();
+    src.type = 'sawtooth';
+    src.frequency.setValueAtTime(470 * pitch, now);
+    src.frequency.linearRampToValueAtTime(760 * pitch, now + dur * 0.3);
+    src.frequency.linearRampToValueAtTime(620 * pitch, now + dur * 0.65);
+    src.frequency.linearRampToValueAtTime(430 * pitch, now + dur);
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 6;
+    const vibG = ctx.createGain();
+    vibG.gain.value = 9 * pitch;
+    vib.connect(vibG).connect(src.frequency);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(0.11, now + 0.06);
+    env.gain.setValueAtTime(0.11, now + dur * 0.6);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    const out = ctx.createGain();
+    out.gain.value = 0.9;
+    // two formant filters gliding i → a → u
+    const formants: [number, number, number][] = [
+      [350, 900, 520],
+      [2300, 1400, 900],
+    ];
+    for (const [a, b, cEnd] of formants) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = 6;
+      bp.frequency.setValueAtTime(a, now);
+      bp.frequency.linearRampToValueAtTime(b, now + dur * 0.45);
+      bp.frequency.linearRampToValueAtTime(cEnd, now + dur);
+      src.connect(bp).connect(env);
+    }
+    const body = ctx.createBiquadFilter();
+    body.type = 'lowpass';
+    body.frequency.value = 3200;
+    env.connect(body).connect(out).connect(this.master);
+    src.start(now);
+    vib.start(now);
+    src.stop(now + dur + 0.05);
+    vib.stop(now + dur + 0.05);
   }
 
   private ensure(): AudioContext | null {

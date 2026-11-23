@@ -313,7 +313,8 @@ test.describe('scene, sound, motion and accessibility', () => {
     await openDiary(page);
     await editor(page).click();
     await page.keyboard.type('Hello cats');
-    await expect(page.locator('.dedication')).toContainText('a little place to keep the things that matter');
+    // the dedication line is switched off in journalConfig for now
+    await expect(page.locator('.dedication')).toHaveCount(0);
     const cats = page.locator('.cats-layer .cat');
     await expect(cats).toHaveCount(2);
     for (const i of [0, 1]) {
@@ -344,6 +345,42 @@ test.describe('scene, sound, motion and accessibility', () => {
       expect(info[1].x).toBeGreaterThan(0);
       expect(info[1].x).toBeLessThan(vw);
     }
+  });
+
+  test('the cats play with the yarn, the house, the box and the bowl', async ({ page }) => {
+    await openDiary(page);
+    type W = { yarn: number; bowl: number; house: number | null; box: number | null };
+    const world = () => page.evaluate(() => (window as unknown as { __cats: { world(): W } }).__cats.world());
+    for (const name of [/Cat house/, /Cardboard box/, /Food bowl/, /Ball of yarn/]) await expect(page.getByRole('button', { name })).toBeVisible();
+    // keyboard: roll the yarn
+    const before = (await world()).yarn;
+    await page.getByRole('button', { name: /Ball of yarn/ }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => Math.abs((await world()).yarn - before), { timeout: 4000 }).toBeGreaterThan(30);
+    // a cat chases it
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __cats: { info(): { action: string }[] } }).__cats.info().some((c) => /yarn/.test(c.action))), { timeout: 4000 })
+      .toBe(true);
+    // invite a cat into the house
+    await page.getByRole('button', { name: /Cat house/ }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await world()).house, { timeout: 15000 }).not.toBeNull();
+    await expect(page.locator('.house-eyes')).toHaveCount(1);
+    // fill the bowl after it has been eaten from
+    await page.getByRole('button', { name: /Food bowl/ }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await world()).bowl, { timeout: 15000 }).toBeLessThan(1);
+  });
+
+  test('cat settings: calm keeps them resting, hidden removes them', async ({ page }) => {
+    await openDiary(page);
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('radio', { name: /Hidden/ }).check();
+    await expect(page.locator('.cats-layer')).toHaveCount(0);
+    await page.getByRole('radio', { name: /Playful/ }).check();
+    await expect(page.locator('.cats-layer .cat')).toHaveCount(2);
+    await expect(page.getByRole('checkbox', { name: /Music-box lullaby/ })).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: /^Sound/ })).not.toBeChecked();
   });
 
   test('cats stay calm while someone is writing and never block the page', async ({ page }) => {

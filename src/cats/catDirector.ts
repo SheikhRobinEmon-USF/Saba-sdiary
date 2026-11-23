@@ -1,60 +1,91 @@
 /**
  * The cats' behaviour director.
  *
- * Each cat runs a queue of steps (pose tweens, waits, walks, callbacks). When
- * the queue empties the director chooses what the cat does next, based on
- * its current posture, on the other cat, and on whether someone is writing:
- * while the diary is being typed in, cats keep to calm, in-place behaviour
- * (dozing, slow blinks, ear twitches, watching the quill) and never walk
- * across the desk.
+ * Each cat runs a queue of steps (pose tweens, waits, walks, hops, callbacks).
+ * When the queue empties the director chooses what the cat does next from her
+ * posture, the toys on the desk, the other cat, and whether someone is
+ * writing: while the diary is being typed in, cats keep to calm, in-place
+ * behaviour and never walk across the page — unless the writer has just
+ * played with a toy themselves.
+ *
+ * Motion: keyframes set a *target* pose; every joint follows its target
+ * through a critically damped spring, so movement never snaps or stops dead
+ * between keyframes. Walks accelerate and slow down, legs move with the
+ * distance actually covered (no skating), and turning around is animated.
  *
  * Behaviours modelled on real cats: sleeping curled up, loafing, slow
- * "cat-kiss" blinks, kneading ("making biscuits"), paw licking and face
- * washing, yawning, the play-bow stretch and hind-leg stretch, ear twitches,
- * tail flicks, head tilts, batting with a paw, the butt-wiggle pounce,
- * watching a moving pen, walking over to greet the other cat with a nuzzle
- * (bunting), grooming each other, and curling up together.
+ * "cat-kiss" blinks, kneading, paw licking and face washing, yawning,
+ * stretches, ear twitches, tail swishes, head tilts, batting, the butt-wiggle
+ * pounce, meowing, watching a moving pen, chasing and batting a ball of yarn,
+ * napping in the cat house, sitting in a cardboard box ("if it fits, I sits"),
+ * eating from the bowl and asking for more, greeting each other with a
+ * nuzzle, grooming each other and curling up together.
  */
 import { GALLERY } from './catActions';
-import { POSES, blend, type Pose } from './catRig';
+import { POSES, POSE_KEYS, blend, type Pose } from './catRig';
 
 export type Posture = 'sleep' | 'loaf' | 'sphinx' | 'sit' | 'stand';
+export type Place = 'house' | 'box' | null;
 
 export interface CatView {
   apply(p: Pose): void;
-  /** x = centre of the cat on the desk lane (layer px); facing 1 = right. */
-  place(x: number, facing: 1 | -1): void;
+  /** x = centre of the cat on the lane (layer px); facing in [-1, 1]. */
+  place(x: number, facing: number): void;
   setAction(name: string, awake: boolean): void;
+  setHidden(hidden: boolean): void;
   /** Head position in client coordinates (for hearts and gaze). */
   headPoint(): { x: number; y: number } | null;
 }
 
+export interface Lane {
+  y: number;
+  min: number;
+  max: number;
+  homes: [number, number];
+  scale: number;
+  house: number | null;
+  box: number | null;
+  bowl: number | null;
+  yarnHome: number;
+}
+
+export interface WorldView {
+  placeYarn(x: number, rot: number): void;
+  setBowl(food: number): void;
+  setHouse(occupant: number | null): void;
+  pawPrint(x: number, facing: number): void;
+}
+
 export interface DirectorEnv {
-  /** ms timestamp of the last diary keystroke. */
   lastTyped(): number;
-  /** nib position (client px) and whether the quill is moving. */
   quill(): { x: number; y: number; active: boolean } | null;
   heart(x: number, y: number): void;
-  sound(kind: 'purr' | 'chirp'): void;
-  /** lane geometry in layer px */
-  lane(): { min: number; max: number; homes: [number, number]; scale: number };
+  sound(kind: 'purr' | 'chirp' | 'meow', cat: number): void;
+  /** Whether the periodic meows (ambient sound) are on. */
+  meows(): boolean;
+  /** 'lively': free to roam; 'calm': mostly rest, move only when played with. */
+  mood(): 'lively' | 'calm';
+  lane(): Lane;
 }
 
 type Ease = (t: number) => number;
 const inOut: Ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 const out: Ease = (t) => 1 - Math.pow(1 - t, 3);
+const inQ: Ease = (t) => t * t;
 
 type Step =
   | { kind: 'tween'; to: Partial<Pose>; dur: number; ease?: Ease }
   | { kind: 'wait'; dur: number }
   | { kind: 'call'; fn: () => void }
-  | { kind: 'walk'; toX: number }
+  | { kind: 'walk'; toX: number | (() => number); run?: boolean; until?: () => boolean }
+  | { kind: 'slide'; toX: number; dur: number; to: Partial<Pose>; ease?: Ease }
   | { kind: 'until'; test: () => boolean; max: number };
 
 const tw = (to: Partial<Pose>, dur: number, ease?: Ease): Step => ({ kind: 'tween', to, dur, ease });
 const wait = (dur: number): Step => ({ kind: 'wait', dur });
 const call = (fn: () => void): Step => ({ kind: 'call', fn });
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const pick = <T,>(items: [T, number][]): T => {
   const total = items.reduce((s, [, w]) => s + w, 0);
   let r = Math.random() * total;
@@ -68,16 +99,23 @@ const key = (name: keyof typeof GALLERY, extra: Partial<Pose> = {}): Partial<Pos
 });
 
 const TYPING_CALM_MS = 6000;
+const BOX_FLOOR = -7;
 
 class Cat {
   pose: Pose;
+  disp: Pose;
+  vel: Record<string, number> = {};
   posture: Posture;
   x: number;
+  vx = 0;
   facing: 1 | -1;
+  facingVis: number;
+  facingVel = 0;
   steps: Step[] = [];
   cur: Step | null = null;
   t = 0;
   from: Pose;
+  fromX = 0;
   action = 'resting';
   walkPhase = 0;
   blinkIn = rnd(2000, 5000);
@@ -88,6 +126,8 @@ class Cat {
   gazeHead = 0;
   breathT = Math.random() * 10000;
   tailT = Math.random() * 10000;
+  inside: Place = null;
+  hunger = rnd(0.3, 0.8);
   constructor(
     public index: number,
     public view: CatView,
@@ -97,12 +137,17 @@ class Cat {
   ) {
     this.posture = posture;
     this.pose = { ...POSES[posture] };
+    this.disp = { ...this.pose };
     this.from = this.pose;
     this.x = x;
     this.facing = facing;
+    this.facingVis = facing;
   }
   get awake(): boolean {
     return this.posture !== 'sleep';
+  }
+  get busyMoving(): boolean {
+    return this.cur?.kind === 'walk' || this.cur?.kind === 'slide' || this.steps.some((s) => s.kind === 'walk' || s.kind === 'slide');
   }
 }
 
@@ -111,20 +156,31 @@ export class CatDirector {
   private raf = 0;
   private last = 0;
   private running = false;
-  private socialAt = performance.now() + rnd(14000, 24000);
+  private socialAt = performance.now() + rnd(16000, 26000);
+  private meowAt = performance.now() + rnd(9000, 16000);
+  private playedAt = -1e9;
   private reduced: boolean;
+  private yarn = { x: 0, vx: 0, rot: 0, dragging: false, samples: [] as { x: number; t: number }[] };
+  private bowl = 1;
+  private houseOwner: number | null = null;
+  private boxOwner: number | null = null;
+  private chaser: Cat | null = null;
 
   constructor(
     views: [CatView, CatView],
+    private world: WorldView,
     private env: DirectorEnv,
     reducedMotion: boolean,
   ) {
     const lane = env.lane();
     this.reduced = reducedMotion;
     this.cats = [new Cat(0, views[0], 'sleep', lane.homes[0], 1), new Cat(1, views[1], 'loaf', lane.homes[1], -1)];
-    for (const c of this.cats) this.render(c);
+    this.yarn.x = lane.yarnHome;
+    for (const c of this.cats) this.render(c, 0, true);
+    this.world.placeYarn(this.yarn.x, 0);
+    this.world.setBowl(this.bowl);
     if (!reducedMotion) {
-      this.cats[0].steps.push(wait(rnd(3000, 6000)));
+      this.cats[0].steps.push(wait(rnd(2500, 5000)));
       this.cats[1].steps.push(wait(rnd(1200, 2500)));
     }
   }
@@ -146,30 +202,41 @@ export class CatDirector {
     if (r) {
       this.stop();
       for (const c of this.cats) {
+        this.leave(c);
         c.steps = [];
         c.cur = null;
         c.pose = { ...POSES[c.posture === 'sleep' ? 'sleep' : 'loaf'] };
-        this.render(c);
+        this.render(c, 0, true);
       }
     } else this.start();
   }
 
-  /** Re-anchor cats after a resize; keeps them on the lane. */
+  /** Re-anchor everything after a resize; keeps cats and toys on the lane. */
   relayout(): void {
     const lane = this.env.lane();
     for (const c of this.cats) {
-      if (c.cur?.kind === 'walk') c.cur = null;
-      c.x = Math.min(lane.max, Math.max(lane.min, c.x));
-      if (this.reduced || Math.abs(c.x - lane.homes[c.index]) > lane.max) c.x = lane.homes[c.index];
-      this.render(c);
+      if (c.cur?.kind === 'walk' || c.cur?.kind === 'slide') c.cur = null;
+      if (c.inside === 'house' && lane.house !== null) c.x = lane.house;
+      else if (c.inside === 'box' && lane.box !== null) c.x = lane.box;
+      else if (c.inside) this.leave(c);
+      c.x = clamp(c.x, lane.min, lane.max);
+      this.render(c, 0, true);
     }
+    this.yarn.x = clamp(this.yarn.x, lane.min, lane.max);
+    this.world.placeYarn(this.yarn.x, this.yarn.rot);
   }
 
   info() {
-    return this.cats.map((c) => ({ action: c.action, posture: c.posture, x: Math.round(c.x), facing: c.facing }));
+    return this.cats.map((c) => ({ action: c.action, posture: c.posture, x: Math.round(c.x), facing: c.facing, inside: c.inside }));
   }
 
-  /** The cat was tapped / clicked / activated from the keyboard. */
+  world_info() {
+    return { yarn: Math.round(this.yarn.x), yarnSpeed: this.yarn.vx, bowl: this.bowl, house: this.houseOwner, box: this.boxOwner };
+  }
+
+  // ------------------------------------------------------ the writer plays
+
+  /** A cat was tapped / clicked / activated from the keyboard. */
   tap(i: number): void {
     const c = this.cats[i];
     const head = c.view.headPoint();
@@ -177,47 +244,151 @@ export class CatDirector {
     if (this.reduced) {
       c.posture = c.posture === 'sleep' ? 'loaf' : 'sleep';
       c.pose = { ...POSES[c.posture] };
-      c.action = c.posture === 'sleep' ? 'dozing' : 'looking at you';
-      this.render(c);
+      this.label(c, c.posture === 'sleep' ? 'dozing' : 'looking at you');
+      this.render(c, 0, true);
       return;
     }
-    c.steps = [];
-    c.cur = null;
+    this.played();
+    this.interrupt(c);
     if (!c.awake) {
-      this.env.sound('chirp');
+      this.env.sound('chirp', i);
       this.run(c, 'waking up to say hello', [
         tw({ eye: 0.5, earNear: 14, earFar: -6 }, 260),
         tw({ ...POSES.sphinx, eye: 1, headRot: -12, headY: -4, pupilW: 2.3 }, 520, out),
-        tw({ earNear: -10 }, 120),
-        tw({ earNear: 0 }, 160),
+        tw({ earNear: -10 }, 140),
+        tw({ earNear: 0 }, 180),
         ...this.slowBlink(),
         call(() => this.setPosture(c, 'sphinx')),
       ]);
       return;
     }
-    this.env.sound('purr');
     const choice = pick<string>([
       ['tilt', 3],
       ['blink', 3],
-      ['bat', c.posture === 'sit' ? 2 : 0],
-      ['bow', c.posture === 'stand' ? 2 : 0],
+      ['meow', 2],
+      ['bat', c.posture === 'sit' && !c.inside ? 2 : 0],
+      ['bow', c.posture === 'stand' && !c.inside ? 2 : 0],
     ]);
+    if (choice !== 'meow') this.env.sound('purr', i);
     if (choice === 'bat') this.run(c, 'batting a paw at you', this.batSteps());
     else if (choice === 'bow') this.run(c, 'doing a little play bow', this.stretchSteps());
-    else if (choice === 'tilt') this.run(c, 'tilting her head at you', [tw({ headRot: c.pose.headRot + 14, earNear: 14, pupilW: 2.4 }, 280, out), wait(900), tw({ headRot: c.pose.headRot, earNear: 0, pupilW: 1.5 }, 400)]);
+    else if (choice === 'meow') this.run(c, 'meowing hello', this.meowSteps(c));
+    else if (choice === 'tilt')
+      this.run(c, 'tilting her head at you', [tw({ headRot: c.pose.headRot + 14, earNear: 14, pupilW: 2.4 }, 280, out), wait(900), tw({ headRot: c.pose.headRot, earNear: 0, pupilW: 1.5 }, 400)]);
     else this.run(c, 'giving you a slow blink', this.slowBlink());
+  }
+
+  /** Flick the yarn along the desk; a cat will usually give chase. */
+  kickYarn(vx?: number): void {
+    if (this.reduced) return;
+    this.played();
+    const lane = this.env.lane();
+    const dir = vx !== undefined ? Math.sign(vx) : this.yarn.x > (lane.min + lane.max) / 2 ? -1 : 1;
+    this.yarn.vx = vx ?? dir * rnd(0.45, 0.75) * lane.scale;
+    this.summonChaser();
+  }
+
+  dragYarn(x: number): void {
+    if (this.reduced) return;
+    const lane = this.env.lane();
+    this.yarn.dragging = true;
+    this.yarn.vx = 0;
+    const nx = clamp(x, lane.min, lane.max);
+    this.yarn.rot += (nx - this.yarn.x) / (14 * lane.scale);
+    this.yarn.x = nx;
+    const now = performance.now();
+    this.yarn.samples.push({ x: nx, t: now });
+    this.yarn.samples = this.yarn.samples.filter((s) => now - s.t < 120);
+    this.world.placeYarn(this.yarn.x, this.yarn.rot);
+  }
+
+  releaseYarn(): void {
+    if (!this.yarn.dragging) return;
+    this.yarn.dragging = false;
+    const s = this.yarn.samples;
+    const v = s.length > 1 ? (s[s.length - 1].x - s[0].x) / Math.max(16, s[s.length - 1].t - s[0].t) : 0;
+    this.yarn.samples = [];
+    this.kickYarn(clamp(v, -1.6, 1.6) || undefined);
+  }
+
+  fillBowl(): void {
+    this.bowl = 1;
+    this.world.setBowl(1);
+    if (this.reduced) return;
+    this.played();
+    for (const c of this.cats) c.hunger = Math.max(c.hunger, 0.7);
+    const eater = this.nearest(this.env.lane().bowl ?? 0, (c) => !c.inside);
+    if (eater) {
+      this.interrupt(eater);
+      if (!eater.awake) this.env.sound('chirp', eater.index);
+      this.act(eater, 'eat');
+    }
+  }
+
+  tapHouse(): void {
+    if (this.reduced) return;
+    this.played();
+    if (this.houseOwner !== null) {
+      const c = this.cats[this.houseOwner];
+      this.interrupt(c);
+      this.run(c, 'coming out of the cat house', this.exitHouseSteps(c));
+      return;
+    }
+    const c = this.nearest(this.env.lane().house ?? 0, (k) => !k.inside);
+    if (c) {
+      this.interrupt(c);
+      this.act(c, 'house');
+    }
+  }
+
+  tapBox(): void {
+    if (this.reduced) return;
+    this.played();
+    if (this.boxOwner !== null) {
+      const c = this.cats[this.boxOwner];
+      this.interrupt(c);
+      this.run(c, 'hopping out of the box', this.exitBoxSteps(c));
+      return;
+    }
+    const c = this.nearest(this.env.lane().box ?? 0, (k) => !k.inside);
+    if (c) {
+      this.interrupt(c);
+      this.act(c, 'box');
+    }
+  }
+
+  /** Make a cat do a named behaviour now (tests and the toys use this). */
+  perform(i: number, name: string): void {
+    const c = this.cats[i];
+    if (!c || this.reduced) return;
+    this.played();
+    if (name === 'social') {
+      this.social(performance.now(), true);
+      return;
+    }
+    if (c.inside && name !== 'house' && name !== 'box') {
+      this.interrupt(c);
+      this.run(c, 'stepping out', c.inside === 'house' ? this.exitHouseSteps(c) : this.exitBoxSteps(c));
+      return;
+    }
+    this.interrupt(c);
+    this.act(c, name);
   }
 
   // ------------------------------------------------------------ the loop
 
   private frame = (now: number): void => {
     if (!this.running) return;
-    const dt = Math.min(64, now - this.last);
+    const dt = Math.min(50, now - this.last);
     this.last = now;
     if (document.visibilityState === 'visible') {
-      const typing = now - this.env.lastTyped() < TYPING_CALM_MS;
+      const typing = this.isTyping(now);
       if (typing) this.calmDown();
-      else if (now > this.socialAt) this.maybeSocial(now);
+      else {
+        if (now > this.socialAt) this.social(now, false);
+      }
+      if (now > this.meowAt) this.ambientMeow(now, typing);
+      this.stepYarn(dt);
       for (const c of this.cats) {
         this.advance(c, dt, typing);
         this.render(c, dt);
@@ -225,6 +396,32 @@ export class CatDirector {
     }
     this.raf = requestAnimationFrame(this.frame);
   };
+
+  private isTyping(now: number): boolean {
+    const t = this.env.lastTyped();
+    return now - t < TYPING_CALM_MS && t > this.playedAt;
+  }
+
+  private played(): void {
+    this.playedAt = performance.now();
+  }
+
+  private stepYarn(dt: number): void {
+    const y = this.yarn;
+    if (y.dragging || Math.abs(y.vx) < 0.002) {
+      y.vx = y.dragging ? y.vx : 0;
+      return;
+    }
+    const lane = this.env.lane();
+    y.x += y.vx * dt;
+    if (y.x < lane.min || y.x > lane.max) {
+      y.x = clamp(y.x, lane.min, lane.max);
+      y.vx = -y.vx * 0.55;
+    }
+    y.vx *= Math.exp(-dt / 650);
+    y.rot += (y.vx * dt) / (14 * lane.scale);
+    this.world.placeYarn(y.x, y.rot);
+  }
 
   private advance(c: Cat, dt: number, typing: boolean): void {
     let budget = dt;
@@ -234,10 +431,12 @@ export class CatDirector {
         c.cur = c.steps.shift() ?? null;
         c.t = 0;
         c.from = { ...c.pose };
+        c.fromX = c.x;
         if (!c.cur) {
           this.choose(c, typing);
           c.cur = c.steps.shift() ?? null;
           c.from = { ...c.pose };
+          c.fromX = c.x;
           if (!c.cur) return;
         }
       }
@@ -253,32 +452,7 @@ export class CatDirector {
         return;
       }
       if (s.kind === 'walk') {
-        const lane = this.env.lane();
-        const speed = 0.075 * (lane.scale / 0.8) * 1.0; // px per ms
-        const dir = Math.sign(s.toX - c.x) || 1;
-        c.facing = dir > 0 ? 1 : -1;
-        const step = Math.min(Math.abs(s.toX - c.x), speed * budget);
-        c.x += dir * step;
-        c.walkPhase += budget * 0.0115;
-        const ph = c.walkPhase;
-        const A = 24;
-        Object.assign(c.pose, POSES.stand, {
-          fnS: 4 + A * Math.sin(ph),
-          fnE: -4 + Math.max(0, -Math.cos(ph)) * 34,
-          ffS: -5 + A * Math.sin(ph + Math.PI),
-          ffE: 3 + Math.max(0, Math.cos(ph)) * 34,
-          hnH: -4 + A * 0.9 * Math.sin(ph + Math.PI),
-          hnK: 10 + Math.max(0, Math.cos(ph)) * 26,
-          hfH: 6 + A * 0.9 * Math.sin(ph),
-          hfK: 4 + Math.max(0, -Math.cos(ph)) * 26,
-          bodyY: -1.2 * Math.abs(Math.sin(ph)),
-          headY: 1.2 * Math.abs(Math.cos(ph)),
-          tail0: -104,
-          tailCurl: 11,
-          pupilW: 1.4,
-        });
-        if (Math.abs(s.toX - c.x) < 0.5) {
-          c.x = s.toX;
+        if (this.walk(c, s, budget)) {
           c.cur = null;
           c.from = { ...c.pose };
           continue;
@@ -289,10 +463,9 @@ export class CatDirector {
       const used = Math.min(budget, dur - c.t);
       c.t += used;
       budget -= used;
-      if (s.kind === 'tween') {
-        const e = (s.ease ?? inOut)(dur > 0 ? Math.min(1, c.t / dur) : 1);
-        c.pose = blend(c.from, s.to, e);
-      }
+      const e = s.kind === 'wait' ? 1 : (s.ease ?? inOut)(dur > 0 ? Math.min(1, c.t / dur) : 1);
+      if (s.kind === 'tween' || s.kind === 'slide') c.pose = blend(c.from, s.to, e);
+      if (s.kind === 'slide') c.x = c.fromX + (s.toX - c.fromX) * e;
       if (c.t >= dur) {
         c.cur = null;
         c.from = { ...c.pose };
@@ -300,24 +473,91 @@ export class CatDirector {
     }
   }
 
-  /** Breathing, blinking, tail sway and gaze are layered on top of the pose. */
-  private render(c: Cat, dt = 0): void {
-    const p = { ...c.pose };
+  /** One walking tick; returns true on arrival. */
+  private walk(c: Cat, s: Extract<Step, { kind: 'walk' }>, dt: number): boolean {
+    const lane = this.env.lane();
+    const target = clamp(typeof s.toX === 'function' ? s.toX() : s.toX, lane.min, lane.max);
+    const dist = target - c.x;
+    const vmax = (s.run ? 0.19 : 0.085) * lane.scale;
+    const acc = (s.run ? 0.0009 : 0.0004) * lane.scale;
+    if (Math.abs(dist) > 3) c.facing = dist > 0 ? 1 : -1;
+    const stop = Math.sqrt(2 * acc * Math.abs(dist));
+    c.vx = Math.min(vmax, c.vx + acc * dt, stop);
+    const move = Math.min(Math.abs(dist), c.vx * dt);
+    c.x += Math.sign(dist) * move;
+    // legs follow distance covered, so feet never skate
+    const stride = 54 * lane.scale;
+    const before = c.walkPhase;
+    c.walkPhase += (move / stride) * Math.PI * 2;
+    if (Math.floor(before / Math.PI) !== Math.floor(c.walkPhase / Math.PI)) this.world.pawPrint(c.x + c.facing * 26 * lane.scale, c.facing);
+    const amp = clamp(c.vx / (0.085 * lane.scale), 0, 1.25);
+    const ph = c.walkPhase;
+    const A = 23 * amp;
+    const lift = (v: number) => Math.max(0, v) * 32 * amp;
+    Object.assign(c.pose, POSES.stand, {
+      fnS: 4 + A * Math.sin(ph),
+      fnE: -4 + lift(-Math.cos(ph)),
+      ffS: -5 + A * Math.sin(ph + Math.PI),
+      ffE: 3 + lift(Math.cos(ph)),
+      hnH: -4 + A * 0.9 * Math.sin(ph + Math.PI),
+      hnK: 10 + lift(Math.cos(ph)) * 0.8,
+      hfH: 6 + A * 0.9 * Math.sin(ph),
+      hfK: 4 + lift(-Math.cos(ph)) * 0.8,
+      bodyY: -1.4 * Math.abs(Math.sin(ph)) * amp,
+      headY: 1.1 * Math.abs(Math.cos(ph)) * amp,
+      headRot: s.run ? -6 : -2,
+      tail0: s.run ? -150 : -104,
+      tailCurl: s.run ? 4 : 11,
+      pupilW: s.run ? 2.4 : 1.4,
+      bodyRot: s.run ? 3 : 0,
+    });
+    const done = s.until ? s.until() : Math.abs(target - c.x) < 0.6 && c.vx < 0.02;
+    if (done) c.vx = 0;
+    return done;
+  }
+
+  /**
+   * Springs: the displayed pose chases the target pose (critically damped),
+   * then breathing, blinks, tail sway and gaze are layered on top.
+   */
+  private render(c: Cat, dt: number, snap = false): void {
+    if (snap) {
+      c.disp = { ...c.pose };
+      c.vel = {};
+      c.facingVis = c.facing;
+    } else if (dt > 0) {
+      const walking = c.cur?.kind === 'walk';
+      const w = walking ? 34 : 15;
+      const n = Math.ceil(dt / 12);
+      const h = dt / n / 1000;
+      for (let i = 0; i < n; i++) {
+        for (const k of POSE_KEYS) {
+          const x = c.disp[k];
+          const v = c.vel[k] ?? 0;
+          const a = w * w * (c.pose[k] - x) - 2 * w * v;
+          const nv = v + a * h;
+          c.vel[k] = nv;
+          c.disp[k] = x + nv * h;
+        }
+        const fa = 13 * 13 * (c.facing - c.facingVis) - 2 * 13 * c.facingVel;
+        c.facingVel += fa * h;
+        c.facingVis += c.facingVel * h;
+      }
+    }
+    const p = { ...c.disp };
     c.breathT += dt;
     c.tailT += dt;
     const sleeping = c.posture === 'sleep' && c.pose.eye < 0.2;
     p.bodySX += Math.sin(c.breathT / (sleeping ? 900 : 700)) * (sleeping ? 0.012 : 0.006);
-    const wave = (sleeping ? 2.5 : c.posture === 'stand' ? 7 : 4.5) + c.flick;
-    p.tailWave += wave;
+    p.tailWave += (sleeping ? 2.5 : c.posture === 'stand' ? 7 : 4.5) + c.flick;
     p.tailPhase += c.tailT / (sleeping ? 1400 : 900);
     c.flick = Math.max(0, c.flick - dt * 0.012);
-    // blinks while awake
     if (!sleeping && p.eye > 0.6 && c.cur?.kind !== 'tween') {
       c.blinkIn -= dt;
       if (c.blinkIn <= 0 && c.blinkT < 0) c.blinkT = 0;
       if (c.blinkT >= 0) {
         c.blinkT += dt;
-        const b = c.blinkT / 170;
+        const b = c.blinkT / 180;
         p.eye *= b < 1 ? 1 - Math.sin(Math.PI * b) * 0.95 : 1;
         if (b >= 1) {
           c.blinkT = -1;
@@ -325,18 +565,25 @@ export class CatDirector {
         }
       }
     }
-    // eyes (and a little head turn) follow the quill while it writes
+    // eyes (and a little head turn) follow the quill — or the rolling yarn
+    let gx = 0,
+      gy = 0,
+      gh = 0;
     const q = this.env.quill();
-    let gx = 0, gy = 0, gh = 0;
-    if (q && q.active && !sleeping && c.pose.eye > 0.5) {
-      const h = c.view.headPoint();
-      if (h) {
-        const dx = (q.x - h.x) * c.facing;
-        const dy = q.y - h.y;
+    const h = !sleeping && c.pose.eye > 0.5 ? c.view.headPoint() : null;
+    if (h) {
+      let target: { x: number; y: number } | null = null;
+      if (Math.abs(this.yarn.vx) > 0.03 || this.yarn.dragging) {
+        const lane = this.env.lane();
+        target = { x: h.x + (this.yarn.x - c.x), y: h.y + 50 * lane.scale };
+      } else if (q && q.active) target = q;
+      if (target) {
+        const dx = (target.x - h.x) * Math.sign(c.facingVis || 1);
+        const dy = target.y - h.y;
         const m = Math.hypot(dx, dy) || 1;
-        gx = Math.max(-1, Math.min(1, (dx / m) * 1.2));
-        gy = Math.max(-1, Math.min(1, (dy / m) * 1.2));
-        gh = Math.max(-7, Math.min(7, (dy / m) * 7 - (dx < 0 ? 4 : 0)));
+        gx = clamp((dx / m) * 1.2, -1, 1);
+        gy = clamp((dy / m) * 1.2, -1, 1);
+        gh = clamp((dy / m) * 7 - (dx < 0 ? 4 : 0), -7, 7);
       }
     }
     const k = Math.min(1, dt / 220);
@@ -347,7 +594,7 @@ export class CatDirector {
     p.pupilY += c.gazeY;
     p.headRot += c.gazeHead;
     c.view.apply(p);
-    c.view.place(c.x, c.facing);
+    c.view.place(c.x, Math.abs(c.facingVis) < 0.12 ? Math.sign(c.facingVis || 1) * 0.12 : c.facingVis);
   }
 
   // --------------------------------------------------------- behaviour
@@ -356,6 +603,13 @@ export class CatDirector {
     c.action = action;
     c.view.setAction(action, true);
     c.steps.push(...steps);
+  }
+
+  private interrupt(c: Cat): void {
+    c.steps = [];
+    c.cur = null;
+    c.vx = 0;
+    if (this.chaser === c) this.chaser = null;
   }
 
   private label(c: Cat, action: string): Step {
@@ -370,107 +624,362 @@ export class CatDirector {
     c.view.setAction(c.action, p !== 'sleep');
   }
 
+  private nearest(x: number, ok: (c: Cat) => boolean): Cat | null {
+    const list = this.cats.filter(ok).sort((a, b) => Number(b.awake) - Number(a.awake) || Math.abs(a.x - x) - Math.abs(b.x - x));
+    return list[0] ?? null;
+  }
+
+  /** Posture change, resolved when the step runs (not when it is planned). */
   private go(c: Cat, p: Posture, dur = 700): Step[] {
+    return [call(() => c.steps.unshift(...this.goNow(c, p, dur)))];
+  }
+
+  private goNow(c: Cat, p: Posture, dur: number): Step[] {
     if (c.posture === p) return [];
     const steps: Step[] = [];
-    // waking from sleep: open eyes and lift the head first
     if (c.posture === 'sleep') steps.push(tw({ eye: 0.6, headRot: 4, headY: 3, headX: 0, earFar: 0, earNear: 0 }, 420));
-    // lying down from standing goes through sitting, which looks natural
     if (c.posture === 'stand' && (p === 'loaf' || p === 'sleep' || p === 'sphinx')) steps.push(tw(POSES.sit, 520));
-    steps.push(tw({ ...POSES[p], eye: p === 'sleep' ? 0 : 1 }, dur), call(() => this.setPosture(c, p)));
+    steps.push(tw({ ...POSES[p], eye: p === 'sleep' ? 0 : 1, y: c.inside === 'box' ? BOX_FLOOR : 0 }, dur), call(() => this.setPosture(c, p)));
     return steps;
+  }
+
+  private walkTo(c: Cat, x: number | (() => number), run = false): Step[] {
+    return [...this.go(c, 'stand', 450), { kind: 'walk', toX: x, run }];
   }
 
   private slowBlink(): Step[] {
     return [tw({ eye: 0.12, pupilW: 2 }, 650), wait(420), tw({ eye: 1, pupilW: 1.6 }, 520)];
   }
 
+  private meowSteps(c: Cat): Step[] {
+    return [call(() => c.steps.unshift(...this.meowNow(c)))];
+  }
+
+  private meowNow(c: Cat): Step[] {
+    const r = c.pose.headRot;
+    return [
+      call(() => this.env.sound('meow', c.index)),
+      tw({ headRot: r - 12, mouth: 0.75, eye: 0.7, earNear: 6 }, 200, out),
+      wait(260),
+      tw({ mouth: 0.25 }, 160),
+      tw({ headRot: r, mouth: 0, eye: 1, earNear: 0 }, 320),
+    ];
+  }
+
   private batSteps(): Step[] {
     return [
       tw({ pupilW: 2.5, earNear: 8 }, 150),
-      tw(key('bat'), 170, out),
-      tw({ fnS: -40, fnE: -8 }, 160),
-      tw(key('bat', { fnS: -88 }), 150, out),
-      tw({ ...POSES.sit, pupilW: 1.6 }, 380),
+      tw(key('bat'), 190, out),
+      tw({ fnS: -40, fnE: -8 }, 180),
+      tw(key('bat', { fnS: -88 }), 170, out),
+      tw({ ...POSES.sit, pupilW: 1.6 }, 420),
     ];
   }
 
   private stretchSteps(): Step[] {
-    return [
-      tw(key('bow'), 700),
-      wait(550),
-      tw(POSES.stand, 480),
-      tw(key('hindStretch'), 520),
-      wait(350),
-      tw(POSES.stand, 420),
-    ];
+    return [tw(key('bow'), 750), wait(550), tw(POSES.stand, 520), tw(key('hindStretch'), 560), wait(350), tw(POSES.stand, 460)];
   }
 
   private groomSteps(c: Cat): Step[] {
     const s: Step[] = [...this.go(c, 'sit', 600)];
-    for (let i = 0; i < 4; i++) {
-      s.push(tw(key('groomLick', { tongue: 1, headY: 8 }), i === 0 ? 420 : 200), tw({ tongue: 0, headY: 5, headRot: 40 }, 190));
-    }
-    for (let i = 0; i < 2; i++) {
-      s.push(tw(key('washFace'), 420), tw(key('groomLick', { tongue: 0, eye: 0.25 }), 360));
-    }
-    s.push(tw({ ...POSES.sit }, 520));
+    for (let i = 0; i < 4; i++) s.push(tw(key('groomLick', { tongue: 1, headY: 8 }), i === 0 ? 450 : 240), tw({ tongue: 0, headY: 5, headRot: 40 }, 220));
+    for (let i = 0; i < 2; i++) s.push(tw(key('washFace'), 460), tw(key('groomLick', { tongue: 0, eye: 0.25 }), 400));
+    s.push(tw({ ...POSES.sit }, 560));
     return s;
   }
 
   private kneadSteps(c: Cat): Step[] {
     const s: Step[] = [...this.go(c, 'sphinx', 600), tw({ eye: 0.35, pupilW: 2 }, 400)];
-    for (let i = 0; i < 6; i++) {
-      s.push(tw({ fnS: -58, fnE: 34, ffS: -84, ffE: 0 }, 230), tw({ fnS: -84, fnE: 0, ffS: -60, ffE: 30 }, 230));
-    }
+    for (let i = 0; i < 6; i++) s.push(tw({ fnS: -58, fnE: 34, ffS: -84, ffE: 0 }, 260), tw({ fnS: -84, fnE: 0, ffS: -60, ffE: 30 }, 260));
     s.push(tw({ ...POSES.sphinx, eye: 0.5 }, 500));
     return s;
   }
 
   private yawnSteps(c: Cat): Step[] {
+    return [call(() => c.steps.unshift(...this.yawnNow(c)))];
+  }
+
+  private yawnNow(c: Cat): Step[] {
     const base = c.posture === 'sit' ? POSES.sit : c.posture === 'stand' ? POSES.stand : POSES.sphinx;
     return [
-      tw({ headRot: base.headRot - 12, mouth: 1, eye: 0.08, earFar: -14, earNear: 14, tongue: 0 }, 650),
+      tw({ headRot: base.headRot - 12, mouth: 1, eye: 0.08, earFar: -14, earNear: 14, tongue: 0 }, 700),
       wait(650),
-      tw({ headRot: base.headRot, mouth: 0, eye: 0.85, earFar: 0, earNear: 0 }, 520),
-      tw({ headRot: base.headRot + 3 }, 160),
-      tw({ headRot: base.headRot }, 180),
+      tw({ headRot: base.headRot, mouth: 0, eye: 0.85, earFar: 0, earNear: 0 }, 560),
     ];
   }
 
-  private pounceSteps(c: Cat): Step[] {
-    const dir = c.facing;
+  private pounceSteps(c: Cat, onLand?: () => void): Step[] {
     const lane = this.env.lane();
-    const s: Step[] = [...this.go(c, 'stand', 400), tw(POSES.crouch, 500)];
-    for (let i = 0; i < 4; i++) s.push(tw({ bodyRot: 8, x: -1.5 }, 90), tw({ bodyRot: 2, x: 1.5 }, 90));
+    const up: Extract<Step, { kind: 'slide' }> = { kind: 'slide', toX: 0, dur: 260, to: { ...POSES.stand, y: -26, bodyRot: -12, fnS: -40, ffS: -30, hnH: 30, hfH: 26 }, ease: out };
+    const down: Extract<Step, { kind: 'slide' }> = { kind: 'slide', toX: 0, dur: 230, to: { ...POSES.crouch, y: 0 }, ease: inQ };
+    const s: Step[] = [...this.go(c, 'stand', 400), tw(POSES.crouch, 520)];
+    for (let i = 0; i < 4; i++) s.push(tw({ bodyRot: 8, x: -1.5 }, 110), tw({ bodyRot: 2, x: 1.5 }, 110));
     s.push(
-      tw({ ...POSES.stand, y: -22, bodyRot: -12, fnS: -40, ffS: -30, hnH: 30, hfH: 26, x: 18 }, 240, out),
-      tw({ ...POSES.crouch, y: 0, x: 30 }, 200),
       call(() => {
-        c.x = Math.min(lane.max, Math.max(lane.min, c.x + 30 * dir * (lane.scale / 0.8)));
-        c.pose.x = 0;
-        c.from = { ...c.pose };
+        const land = clamp(c.x + 34 * c.facing * lane.scale, lane.min, lane.max);
+        up.toX = c.x + (land - c.x) * 0.6;
+        down.toX = land;
       }),
-      tw({ ...POSES.stand, x: 0 }, 360),
+      up,
+      down,
+      call(() => onLand?.()),
+      tw({ ...POSES.stand }, 380),
+      call(() => this.setPosture(c, 'stand')),
     );
     return s;
   }
 
+  // ----------------------------------------------------------- toys
+
+  private yarnSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const reach = 52 * lane.scale;
+    const side = () => (this.yarn.x >= c.x ? -1 : 1);
+    return [
+      ...this.walkTo(c, () => this.yarn.x + side() * reach, Math.abs(this.yarn.x - c.x) > 200 * lane.scale),
+      call(() => (c.facing = this.yarn.x >= c.x ? 1 : -1)),
+      this.label(c, 'batting the yarn ball'),
+      ...this.go(c, 'sit', 380),
+      tw({ pupilW: 2.6, earNear: 10, earFar: -6 }, 200),
+      tw(key('bat'), 170, out),
+      call(() => {
+        this.yarn.vx = c.facing * rnd(0.32, 0.6) * lane.scale;
+      }),
+      tw({ ...POSES.sit, pupilW: 2.2 }, 380),
+      wait(500),
+      call(() => {
+        if (Math.random() < 0.65) {
+          c.steps.unshift(...this.chaseSteps(c));
+        }
+      }),
+    ];
+  }
+
+  private chaseSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const reach = 46 * lane.scale;
+    this.chaser = c;
+    return [
+      this.label(c, 'chasing the yarn ball'),
+      ...this.go(c, 'stand', 300),
+      {
+        kind: 'walk',
+        run: true,
+        toX: () => this.yarn.x - (this.yarn.x >= c.x ? 1 : -1) * reach,
+        until: () => Math.abs(this.yarn.vx) < 0.03 && Math.abs(Math.abs(this.yarn.x - c.x) - reach) < 6,
+      },
+      call(() => (c.facing = this.yarn.x >= c.x ? 1 : -1)),
+      ...this.pounceSteps(c, () => {
+        this.yarn.vx = c.facing * rnd(0.15, 0.35) * lane.scale;
+      }),
+      call(() => {
+        if (this.chaser === c) this.chaser = null;
+      }),
+      this.label(c, 'proud of her catch'),
+      ...this.go(c, 'sit', 500),
+      ...this.slowBlink(),
+    ];
+  }
+
+  private summonChaser(): void {
+    if (this.chaser && !this.chaser.inside) return;
+    const c = this.nearest(this.yarn.x, (k) => !k.inside && k.awake) ?? this.nearest(this.yarn.x, (k) => !k.inside);
+    if (!c) return;
+    this.interrupt(c);
+    if (!c.awake) this.run(c, 'waking up for the yarn', [tw({ ...POSES.sphinx, eye: 1, pupilW: 2.5 }, 500), call(() => this.setPosture(c, 'sphinx'))]);
+    c.steps.push(...this.chaseSteps(c));
+  }
+
+  private houseSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    if (lane.house === null || this.houseOwner !== null) return this.go(c, 'loaf');
+    const door = lane.house;
+    return [
+      this.label(c, 'heading to the cat house'),
+      ...this.walkTo(c, door),
+      call(() => {
+        if (this.houseOwner !== null) {
+          this.interrupt(c);
+          this.run(c, 'waiting her turn for the cat house', this.go(c, 'sit'));
+          return;
+        }
+        this.houseOwner = c.index;
+        c.inside = 'house';
+        c.view.setHidden(true);
+        this.world.setHouse(c.index);
+        c.pose = { ...POSES.sleep, eye: 0.6 };
+        c.posture = 'loaf';
+      }),
+      this.label(c, 'peeking out of the cat house'),
+      wait(rnd(5000, 9000)),
+      call(() => this.setPosture(c, 'sleep')),
+      this.label(c, 'napping in the cat house'),
+      wait(rnd(12000, 26000)),
+      ...this.exitHouseSteps(c),
+    ];
+  }
+
+  private exitHouseSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const out = clamp((lane.house ?? c.x) + 92 * lane.scale, lane.min, lane.max);
+    return [
+      call(() => {
+        c.pose = { ...POSES.stand };
+        c.posture = 'stand';
+        c.facing = 1;
+        this.render(c, 0, true);
+        c.view.setHidden(false);
+        this.world.setHouse(null);
+        this.houseOwner = null;
+        c.inside = null;
+      }),
+      this.label(c, 'stepping out of the cat house'),
+      { kind: 'walk', toX: out },
+      ...this.stretchSteps(),
+      ...this.go(c, 'sit', 500),
+    ];
+  }
+
+  private boxSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    if (lane.box === null || this.boxOwner !== null) return this.go(c, 'sit');
+    const box = lane.box;
+    const side = c.x < box ? -1 : 1;
+    const approach = clamp(box + side * 92 * lane.scale, lane.min, lane.max);
+    return [
+      this.label(c, 'eyeing the cardboard box'),
+      ...this.walkTo(c, approach),
+      call(() => (c.facing = side > 0 ? -1 : 1)),
+      tw({ ...POSES.sit, headRot: 20, pupilW: 2.5 }, 450),
+      wait(500),
+      tw(POSES.crouch, 400),
+      call(() => {
+        if (this.boxOwner !== null) {
+          this.interrupt(c);
+          this.run(c, 'sitting by the box', this.go(c, 'sit'));
+          return;
+        }
+        this.boxOwner = c.index;
+      }),
+      this.label(c, 'hopping into the box — if it fits, she sits'),
+      { kind: 'slide', toX: (approach + box) / 2, dur: 260, to: { ...POSES.stand, y: -40, bodyRot: -10, fnS: -30, ffS: -26, hnH: 24, hfH: 20 }, ease: out },
+      { kind: 'slide', toX: box, dur: 260, to: { ...POSES.sit, y: BOX_FLOOR }, ease: inQ },
+      call(() => {
+        c.inside = 'box';
+        this.setPosture(c, 'sit');
+      }),
+      this.label(c, 'sitting in the box'),
+      ...this.slowBlink(),
+      wait(rnd(4000, 7000)),
+      tw({ ...POSES.loaf, y: BOX_FLOOR + 6, eye: 0.3 }, 900),
+      call(() => this.setPosture(c, 'loaf')),
+      this.label(c, 'snoozing in the box'),
+      wait(rnd(8000, 16000)),
+      ...this.exitBoxSteps(c),
+    ];
+  }
+
+  private exitBoxSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const box = lane.box ?? c.x;
+    const dir = box > (lane.min + lane.max) / 2 ? -1 : 1;
+    const landX = clamp(box + dir * 96 * lane.scale, lane.min, lane.max);
+    return [
+      tw({ ...POSES.sit, y: BOX_FLOOR, eye: 1 }, 500),
+      call(() => (c.facing = dir > 0 ? 1 : -1)),
+      tw({ ...POSES.crouch, y: BOX_FLOOR }, 380),
+      { kind: 'slide', toX: (box + landX) / 2, dur: 260, to: { ...POSES.stand, y: -40, bodyRot: -10, fnS: -30, ffS: -26, hnH: 24, hfH: 20 }, ease: out },
+      { kind: 'slide', toX: landX, dur: 260, to: { ...POSES.crouch, y: 0 }, ease: inQ },
+      call(() => {
+        c.inside = null;
+        this.boxOwner = null;
+        c.posture = 'stand';
+      }),
+      tw(POSES.stand, 360),
+      this.label(c, 'out of the box'),
+      ...this.go(c, 'sit', 500),
+    ];
+  }
+
+  private eatSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    if (lane.bowl === null) return [];
+    const bowl = lane.bowl;
+    const side = c.x < bowl ? -1 : 1;
+    const spot = clamp(bowl + side * 60 * lane.scale, lane.min, lane.max);
+    if (this.bowl <= 0.01) {
+      return [
+        this.label(c, 'checking the food bowl'),
+        ...this.walkTo(c, spot),
+        call(() => (c.facing = side > 0 ? -1 : 1)),
+        tw({ ...POSES.stand, headRot: 34, headY: 12 }, 500),
+        wait(700),
+        ...this.go(c, 'sit', 500),
+        this.label(c, 'asking you for a snack'),
+        tw({ pupilW: 2.6, headRot: POSES.sit.headRot - 10 }, 300),
+        ...(this.env.meows() ? this.meowSteps(c) : []),
+        wait(2500),
+      ];
+    }
+    const s: Step[] = [
+      this.label(c, 'trotting to the food bowl'),
+      ...this.walkTo(c, spot),
+      call(() => (c.facing = side > 0 ? -1 : 1)),
+      this.label(c, 'eating her supper'),
+      tw({ ...POSES.stand, headRot: 38, headY: 15, headX: 2, eye: 0.6 }, 500),
+    ];
+    for (let i = 0; i < 6; i++) {
+      s.push(
+        tw({ headY: 18, mouth: 0.25 }, 200),
+        tw({ headY: 14, mouth: 0 }, 200),
+        call(() => {
+          this.bowl = Math.max(0, this.bowl - 1 / 12);
+          this.world.setBowl(this.bowl);
+        }),
+      );
+    }
+    s.push(call(() => (c.hunger = 0)), tw({ ...POSES.stand, tongue: 1 }, 260), tw({ tongue: 0 }, 220), tw({ tongue: 1 }, 220), tw({ tongue: 0 }, 220), ...this.groomSteps(c));
+    return s;
+  }
+
+  // -------------------------------------------------- choosing & calm
+
   /** While someone writes: no walking, nothing sudden. */
   private calmDown(): void {
     for (const c of this.cats) {
-      const walking = c.cur?.kind === 'walk' || c.steps.some((s) => s.kind === 'walk');
-      if (walking) {
-        c.steps = [];
-        c.cur = null;
+      if (c.inside) continue;
+      if (c.busyMoving) {
+        this.interrupt(c);
         this.run(c, 'settling down to watch you write', this.go(c, 'sit', 500));
       }
     }
+    if (Math.abs(this.yarn.vx) > 0.15) this.yarn.vx *= 0.9;
+  }
+
+  private ambientMeow(now: number, typing: boolean): void {
+    this.meowAt = now + rnd(22000, 46000);
+    if (!this.env.meows() || typing) return;
+    const c = this.cats.filter((k) => k.awake && k.inside !== 'house' && !k.busyMoving && k.cur?.kind !== 'tween')[Math.random() < 0.5 ? 0 : 1] ?? this.cats.find((k) => k.awake && !k.busyMoving && k.inside !== 'house');
+    if (!c) return;
+    c.cur = null;
+    const rest = c.steps;
+    c.steps = [...this.meowSteps(c), ...rest];
+    c.action = 'meowing';
+    c.view.setAction('meowing', true);
   }
 
   private choose(c: Cat, typing: boolean): void {
     const lane = this.env.lane();
-    if (typing) {
+    const calmMood = this.env.mood() === 'calm';
+    if (c.inside === 'house') {
+      this.run(c, 'napping in the cat house', [wait(rnd(6000, 12000)), ...(typing ? [] : this.exitHouseSteps(c))]);
+      return;
+    }
+    if (c.inside === 'box') {
+      this.run(c, 'snoozing in the box', [wait(rnd(5000, 9000)), ...(typing ? [] : this.exitBoxSteps(c))]);
+      return;
+    }
+    if (typing || calmMood) {
       const calm = pick<string>([
         ['watch', c.awake ? 4 : 0],
         ['blink', c.awake ? 2 : 0],
@@ -478,6 +987,7 @@ export class CatDirector {
         ['flick', 2],
         ['doze', c.awake ? 1 : 6],
         ['knead', c.posture === 'sphinx' || c.posture === 'loaf' ? 1 : 0],
+        ['groom', !typing && c.awake ? 1 : 0],
       ]);
       switch (calm) {
         case 'watch':
@@ -487,7 +997,7 @@ export class CatDirector {
           this.run(c, 'giving a slow blink', [...this.slowBlink(), wait(rnd(1500, 3000))]);
           return;
         case 'ear':
-          this.run(c, c.awake ? 'twitching an ear' : 'twitching an ear in her sleep', [tw({ earNear: -18 }, 90), tw({ earNear: 0 }, 150), tw({ earNear: -14 }, 90), tw({ earNear: 0 }, 160), wait(rnd(2000, 4000))]);
+          this.run(c, c.awake ? 'twitching an ear' : 'twitching an ear in her sleep', [tw({ earNear: -18 }, 110), tw({ earNear: 0 }, 170), tw({ earNear: -14 }, 110), tw({ earNear: 0 }, 180), wait(rnd(2000, 4000))]);
           return;
         case 'flick':
           this.run(c, c.awake ? 'flicking her tail' : 'dreaming', [call(() => (c.flick = 14)), wait(rnd(2500, 4500))]);
@@ -495,36 +1005,28 @@ export class CatDirector {
         case 'knead':
           this.run(c, 'kneading — making biscuits', this.kneadSteps(c));
           return;
+        case 'groom':
+          this.run(c, 'licking her paw and washing her face', this.groomSteps(c));
+          return;
         default:
-          this.run(c, 'dozing', [...this.go(c, 'sleep', 1200), wait(rnd(6000, 12000))]);
+          this.run(c, 'dozing', [...this.go(c, 'sleep', 1300), wait(rnd(6000, 12000))]);
           return;
       }
     }
 
     const home = lane.homes[c.index];
-    const far = Math.abs(c.x - home) > 40 * (lane.scale / 0.8);
+    const far = Math.abs(c.x - home) > 60 * lane.scale;
+    const toys = c.awake ? 1 : 0;
     const options: [string, number][] =
       c.posture === 'sleep'
         ? [['sleep', 6], ['wake', 2], ['stretchUp', 1], ['ear', 1], ['flick', 1]]
         : c.posture === 'loaf' || c.posture === 'sphinx'
-          ? [['blink', 2], ['knead', 2], ['yawn', 1], ['ear', 1], ['sleep', 2], ['sit', 2], ['stand', 1], ['home', far ? 3 : 0]]
+          ? [['blink', 2], ['knead', 2], ['yawn', 1], ['ear', 1], ['sleep', 2], ['sit', 2], ['stand', 1], ['home', far ? 2 : 0], ['house', lane.house !== null ? 1.2 : 0], ['eat', c.hunger > 0.5 ? 1.5 : 0]]
           : c.posture === 'sit'
-            ? [['groom', 3], ['flick', 1], ['bat', 1], ['tilt', 1], ['yawn', 1], ['loaf', 1], ['stand', 1], ['home', far ? 3 : 0]]
-            : [['stretch', 2], ['wander', 2], ['sit', 2], ['pounce', 1], ['home', far ? 4 : 0]];
+            ? [['groom', 3], ['flick', 1], ['bat', 1], ['tilt', 1], ['yawn', 1], ['loaf', 1], ['stand', 1], ['home', far ? 2 : 0], ['yarn', 2 * toys], ['box', lane.box !== null ? 1.2 : 0], ['eat', c.hunger > 0.5 ? 1.5 : 0]]
+            : [['stretch', 2], ['wander', 2], ['sit', 2], ['pounce', 1], ['home', far ? 3 : 0], ['yarn', 2], ['box', lane.box !== null ? 1 : 0]];
     this.act(c, pick(options));
-  }
-
-  /** Make a cat do a named behaviour now (used by tests and the tap reaction). */
-  perform(i: number, name: string): void {
-    const c = this.cats[i];
-    if (!c || this.reduced) return;
-    c.steps = [];
-    c.cur = null;
-    if (name === 'social') {
-      this.maybeSocial(performance.now());
-      return;
-    }
-    this.act(c, name);
+    c.hunger = Math.min(1, c.hunger + 0.06);
   }
 
   private act(c: Cat, choice: string): void {
@@ -532,16 +1034,16 @@ export class CatDirector {
     const home = lane.homes[c.index];
     switch (choice) {
       case 'sleep':
-        this.run(c, 'sleeping, curled up', [...this.go(c, 'sleep', 1400), wait(rnd(9000, 20000))]);
+        this.run(c, 'sleeping, curled up', [...this.go(c, 'sleep', 1500), wait(rnd(9000, 20000))]);
         break;
       case 'wake':
-        this.run(c, 'waking up', [...this.go(c, 'sphinx', 800), ...this.yawnSteps({ ...c, posture: 'sphinx' } as Cat), wait(rnd(1500, 3000))]);
+        this.run(c, 'waking up', [...this.go(c, 'sphinx', 800), ...this.yawnSteps(c), wait(rnd(1500, 3000))]);
         break;
       case 'stretchUp':
-        this.run(c, 'waking up with a big stretch', [...this.go(c, 'stand', 900), ...this.stretchSteps(), call(() => this.setPosture(c, 'stand')), wait(800)]);
+        this.run(c, 'waking up with a big stretch', [...this.go(c, 'stand', 900), ...this.stretchSteps(), wait(800)]);
         break;
       case 'ear':
-        this.run(c, 'twitching an ear', [tw({ earNear: -18 }, 90), tw({ earNear: 0 }, 150), wait(rnd(1500, 3000))]);
+        this.run(c, 'twitching an ear', [tw({ earNear: -18 }, 110), tw({ earNear: 0 }, 170), wait(rnd(1500, 3000))]);
         break;
       case 'flick':
         this.run(c, 'swishing her tail', [call(() => (c.flick = 16)), wait(rnd(2000, 3500))]);
@@ -554,6 +1056,9 @@ export class CatDirector {
         break;
       case 'yawn':
         this.run(c, 'yawning', [...this.yawnSteps(c), wait(rnd(1500, 3000))]);
+        break;
+      case 'meow':
+        this.run(c, 'meowing', [...this.go(c, c.posture === 'sleep' ? 'sphinx' : c.posture), ...this.meowSteps(c), wait(1500)]);
         break;
       case 'sit':
         this.run(c, 'sitting up', [...this.go(c, 'sit'), wait(rnd(1500, 3500))]);
@@ -571,7 +1076,7 @@ export class CatDirector {
         this.run(c, 'batting at a speck of dust', [...this.go(c, 'sit'), ...this.batSteps(), wait(rnd(1500, 2500))]);
         break;
       case 'tilt':
-        this.run(c, 'tilting her head, curious', [...this.go(c, 'sit'), tw({ headRot: POSES.sit.headRot + 14, earNear: 14 }, 300, out), wait(1100), tw({ headRot: POSES.sit.headRot, earNear: 0 }, 400), wait(rnd(1500, 3000))]);
+        this.run(c, 'tilting her head, curious', [...this.go(c, 'sit'), tw({ headRot: POSES.sit.headRot + 14, earNear: 14 }, 320, out), wait(1100), tw({ headRot: POSES.sit.headRot, earNear: 0 }, 420), wait(rnd(1500, 3000))]);
         break;
       case 'stretch':
         this.run(c, 'stretching — a play bow', [...this.go(c, 'stand', 600), ...this.stretchSteps(), wait(rnd(1000, 2000))]);
@@ -580,64 +1085,90 @@ export class CatDirector {
         this.run(c, 'wiggling and pouncing', [...this.pounceSteps(c), wait(rnd(1200, 2400))]);
         break;
       case 'wander': {
-        const span = 120 * (lane.scale / 0.8);
-        const to = Math.min(lane.max, Math.max(lane.min, home + rnd(-span, span)));
-        this.run(c, 'strolling along the desk', [...this.go(c, 'stand', 500), { kind: 'walk', toX: to }, this.label(c, 'looking around'), tw(POSES.stand, 300), wait(rnd(800, 2000))]);
+        const span = 140 * lane.scale;
+        const to = clamp(home + rnd(-span, span), lane.min, lane.max);
+        this.run(c, 'strolling along the desk', [...this.walkTo(c, to), this.label(c, 'looking around'), tw(POSES.stand, 300), wait(rnd(800, 2000))]);
         break;
       }
       case 'home':
-        this.run(c, 'heading back to her spot', [...this.go(c, 'stand', 500), { kind: 'walk', toX: home }, this.label(c, 'back in her spot'), tw(POSES.stand, 300), ...this.go(c, 'sit', 600)]);
+        this.run(c, 'heading back to her spot', [...this.walkTo(c, home), this.label(c, 'back in her spot'), tw(POSES.stand, 300), ...this.go(c, 'sit', 600)]);
         break;
+      case 'yarn':
+        this.run(c, 'going after the yarn ball', this.yarnSteps(c));
+        break;
+      case 'chase':
+        c.steps.push(...this.chaseSteps(c));
+        break;
+      case 'house':
+        this.run(c, 'heading to the cat house', this.houseSteps(c));
+        break;
+      case 'box':
+        this.run(c, 'eyeing the cardboard box', this.boxSteps(c));
+        break;
+      case 'eat':
+        this.run(c, 'trotting to the food bowl', this.eatSteps(c));
+        break;
+      default:
+        this.run(c, 'resting', [wait(2000)]);
     }
   }
 
+  private leave(c: Cat): void {
+    if (c.inside === 'house') {
+      this.world.setHouse(null);
+      this.houseOwner = null;
+    }
+    if (c.inside === 'box') this.boxOwner = null;
+    c.inside = null;
+    c.view.setHidden(false);
+    c.pose.y = 0;
+  }
+
   /** One cat walks over to the other to say hello; sometimes they nap together. */
-  private maybeSocial(now: number): void {
-    this.socialAt = now + rnd(28000, 50000);
+  private social(now: number, forced: boolean): void {
+    this.socialAt = now + rnd(30000, 52000);
+    if (this.env.mood() === 'calm' && !forced) return;
     const [a, b] = Math.random() < 0.5 ? this.cats : [this.cats[1], this.cats[0]];
-    if (a.cur?.kind === 'walk' || b.cur?.kind === 'walk') return;
+    if (a.inside || b.inside === 'house' || a.busyMoving || b.busyMoving || this.chaser) return;
     const lane = this.env.lane();
     const gap = 168 * lane.scale;
-    const side = a.x < b.x ? -1 : 1; // a stops on its own side of b
-    const target = Math.min(lane.max, Math.max(lane.min, b.x + side * gap));
+    const side = a.x < b.x ? -1 : 1;
+    const target = clamp(b.x + side * gap, lane.min, lane.max);
     if (Math.abs(target - a.x) < 10) return;
     let arrived = false;
-    a.steps = [];
-    a.cur = null;
-    b.steps = [];
-    b.cur = null;
+    this.interrupt(a);
+    this.interrupt(b);
     const faceB = -side as 1 | -1;
-    const together = Math.random() < 0.4;
+    const together = Math.random() < 0.4 && !b.inside;
     this.run(a, 'walking over to say hello', [
-      ...this.go(a, 'stand', 600),
-      { kind: 'walk', toX: target },
+      ...this.walkTo(a, target),
       call(() => {
         a.facing = faceB;
         arrived = true;
       }),
       this.label(a, 'nuzzling her friend'),
-      tw(POSES.stand, 250),
-      tw(key('nuzzle'), 480),
+      tw(POSES.stand, 300),
+      tw(key('nuzzle'), 520),
       call(() => {
         const h = a.view.headPoint();
         if (h) this.env.heart(h.x + 12 * faceB, h.y - 14);
       }),
       wait(700),
-      tw(POSES.stand, 400),
+      tw(POSES.stand, 420),
       ...(Math.random() < 0.5
-        ? // a little grooming for her friend
-          [tw({ ...key('nuzzle'), tongue: 1, headY: 3 }, 220), tw({ tongue: 0, headY: 0 }, 200), tw({ tongue: 1, headY: 3 }, 220), tw({ ...POSES.stand }, 300)]
+        ? [this.label(a, 'grooming her friend'), tw({ ...key('nuzzle'), tongue: 1, headY: 3 }, 240), tw({ tongue: 0, headY: 0 }, 220), tw({ tongue: 1, headY: 3 }, 240), tw({ ...POSES.stand }, 320)]
         : []),
-      ...(together ? [tw(POSES.sit, 500), tw({ ...POSES.loaf }, 700), call(() => this.setPosture(a, 'loaf')), wait(2500), tw({ ...POSES.sleep }, 1500), call(() => this.setPosture(a, 'sleep')), wait(rnd(14000, 22000))] : [wait(600)]),
+      ...(together
+        ? [this.label(a, 'curling up next to her friend'), tw(POSES.sit, 520), tw({ ...POSES.loaf }, 760), call(() => this.setPosture(a, 'loaf')), wait(2500), tw({ ...POSES.sleep }, 1600), call(() => this.setPosture(a, 'sleep')), wait(rnd(14000, 22000))]
+        : [wait(600)]),
     ]);
-    a.posture = 'stand';
     this.run(b, 'greeting her friend', [
-      ...this.go(b, b.posture === 'sleep' ? 'sphinx' : b.posture, 600),
+      ...(b.inside ? [] : this.go(b, b.posture === 'sleep' ? 'sphinx' : b.posture, 600)),
       call(() => (b.facing = side as 1 | -1)),
       { kind: 'until', test: () => arrived, max: 15000 },
-      tw({ headRot: b.pose.headRot - 10, headX: 4, eye: 0.2 }, 480),
+      tw({ headRot: b.pose.headRot - 10, headX: 4, eye: 0.2 }, 500),
       wait(900),
-      tw({ eye: 1, headX: 0, headRot: b.pose.headRot }, 400),
+      tw({ eye: 1, headX: 0, headRot: b.pose.headRot }, 420),
       ...(together ? [tw({ ...POSES.sleep }, 1600), call(() => this.setPosture(b, 'sleep')), wait(rnd(14000, 22000))] : [wait(1200)]),
     ]);
   }

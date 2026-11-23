@@ -88,6 +88,8 @@ export default function App() {
     root.dataset.ink = prefs.ink;
   }, [prefs.ink]);
 
+  useEffect(() => sound.setAmbient(prefs.music), [prefs.music]);
+
   // Sound is only ever started from a user gesture.
   useEffect(() => {
     if (!prefs.sound) {
@@ -348,12 +350,16 @@ export default function App() {
           }}
         />
 
-        <CatsLayer
-          reducedMotion={reduced}
-          lastTyped={() => lastTyped.current}
-          quill={() => quillClient.current}
-          onSound={(k) => (k === 'purr' ? sound.purr() : sound.chirp())}
-        />
+        {prefs.cats !== 'hidden' && (
+          <CatsLayer
+            reducedMotion={reduced}
+            mood={prefs.cats === 'calm' ? 'calm' : 'lively'}
+            meows={() => sound.ambientOn}
+            lastTyped={() => lastTyped.current}
+            quill={() => quillClient.current}
+            onSound={(k, i) => (k === 'purr' ? sound.purr() : k === 'chirp' ? sound.chirp() : sound.meow(i))}
+          />
+        )}
 
         <div className="quill-layer" aria-hidden="true">
           <Quill ref={quillRef} scale={quillScale} />
@@ -394,11 +400,36 @@ export default function App() {
           </div>
         </fieldset>
         <fieldset className="field">
-          <legend>Atmosphere</legend>
+          <legend>The cats</legend>
+          <div className="choice-row">
+            {(
+              [
+                ['lively', 'Playful', 'they roam, play with their toys and visit each other'],
+                ['calm', 'Calm', 'mostly dozing; they still play when you tap a toy'],
+                ['hidden', 'Hidden', 'no cats on the desk'],
+              ] as const
+            ).map(([v, label, hint]) => (
+              <label key={v} className="choice">
+                <input type="radio" name="cats" checked={prefs.cats === v} onChange={() => setPref('cats', v)} />
+                <span>
+                  {label} <small>{hint}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="field">
+          <legend>Sound &amp; atmosphere</legend>
           <label className="choice">
             <input type="checkbox" checked={prefs.sound} onChange={toggleSound} />
             <span>
-              Soft quill sounds <small>off by default</small>
+              Sound <small>quill scratches, purrs and chirps — off by default</small>
+            </span>
+          </label>
+          <label className="choice">
+            <input type="checkbox" checked={prefs.music} onChange={(e) => setPref('music', e.target.checked)} />
+            <span>
+              Music-box lullaby &amp; meows <small>plays only while sound is on; the cats meow now and then</small>
             </span>
           </label>
           <label className="choice">

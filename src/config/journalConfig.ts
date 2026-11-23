@@ -9,12 +9,15 @@ export const journalConfig = {
   tagline: 'a personal diary · every thought deserves to be written beautifully',
   /** Optional recipient name. Leave empty ('') to omit it everywhere. */
   recipientName: 'Saba',
-  /** The dedication shown in the masthead and (optionally) in the PDF. */
-  dedication: 'For you, a little place to keep the things that matter.',
+  /**
+   * The dedication shown in the masthead and (optionally) in the PDF.
+   * Leave empty ('') to hide it. Example: 'For you, a little place to keep the things that matter.'
+   */
+  dedication: '' as string,
   includeDedicationInPdf: true,
   /** Placeholders on the page. */
   titlePlaceholder: 'Dear diary…',
-  bodyPlaceholder: 'Touch the page and begin to write…',
+  bodyPlaceholder: 'Touch the page and begin to write… the cats are listening.',
   /**
    * The hidden note revealed by the wax seal. It is shown in its own card and
    * is never written into the diary.

@@ -46,13 +46,27 @@ export default function DeskScene({ children, inkpotRef, onSeal, ambience }: Pro
           <img className="corner corner-tl" src={botanicalUrl} alt="" draggable={false} />
           <img className="corner corner-br" src={botanicalUrl} alt="" draggable={false} />
           <div className="margin-line" />
-          <svg className="margin-paw" viewBox="0 0 40 40" width="22" height="22">
-            <ellipse cx="20" cy="26" rx="9" ry="7.5" />
-            <ellipse cx="9" cy="15" rx="3.6" ry="4.6" transform="rotate(-20 9 15)" />
-            <ellipse cx="16.5" cy="9.5" rx="3.6" ry="4.8" />
-            <ellipse cx="24.5" cy="9.5" rx="3.6" ry="4.8" />
-            <ellipse cx="31.5" cy="15" rx="3.6" ry="4.6" transform="rotate(20 31.5 15)" />
-          </svg>
+          {[
+            [150, -5, -18],
+            [204, 5, -10],
+            [258, -5, -18],
+            [312, 5, -10],
+          ].map(([top, dx, rot], i) => (
+            <svg
+              key={i}
+              className="margin-paw"
+              viewBox="0 0 40 40"
+              width="18"
+              height="18"
+              style={{ top, marginLeft: dx, transform: `rotate(${rot + 180}deg)`, opacity: 0.55 - i * 0.1 }}
+            >
+              <ellipse cx="20" cy="26" rx="9" ry="7.5" />
+              <ellipse cx="9" cy="15" rx="3.6" ry="4.6" transform="rotate(-20 9 15)" />
+              <ellipse cx="16.5" cy="9.5" rx="3.6" ry="4.8" />
+              <ellipse cx="24.5" cy="9.5" rx="3.6" ry="4.8" />
+              <ellipse cx="31.5" cy="15" rx="3.6" ry="4.6" transform="rotate(20 31.5 15)" />
+            </svg>
+          ))}
           <svg className="margin-heart" viewBox="0 0 20 18" width="14" height="13">
             <path d="M10 17 C4 12 1 9 1 5.5 C1 3 3 1 5.5 1 C7.5 1 9 2.3 10 4 C11 2.3 12.5 1 14.5 1 C17 1 19 3 19 5.5 C19 9 16 12 10 17 Z" />
           </svg>

@@ -413,6 +413,8 @@ function desk() {
     <path d="${shelf}" stroke-width="1.4" opacity=".6"/>
     <path d="${hatch(0, 0, W, 30, 4, 90, r)}" stroke-width=".5" opacity=".25"/>
   </g>
+  ${shelfCat(1405, 110, 1, rng(5))}
+  ${shelfCat(170, 110, -1, rng(6))}
   <path d="M0 ${wallBottom}L${W} ${wallBottom}" stroke="${WALNUT}" stroke-width="2.2" opacity=".55"/>
   <path d="M0 ${wallBottom + 8}L${W} ${wallBottom + 8}" stroke="${WALNUT}" stroke-width=".8" opacity=".4"/>
   <path d="${hatch(0, wallBottom, W, wallBottom + 26, 3, 90, r)}" stroke="${WALNUT}" stroke-width=".6" opacity=".22"/>
@@ -429,6 +431,27 @@ function desk() {
   <rect width="${W}" height="${H}" fill="url(#vignette)"/>
 </svg>`;
   write('desk.svg', svg);
+}
+
+/** A cat dozing on a bookshelf, tail hanging over the edge (library wall). */
+function shelfCat(x, y, dir, r) {
+  const body = `M-34 0 C-38 -16 -24 -27 -2 -27 C16 -27 26 -20 28 -10 C30 -4 30 0 28 0 Z`;
+  const head = `M18 -6 C14 -20 22 -30 32 -30 C42 -30 48 -22 46 -12 C45 -5 38 0 30 0 C24 0 19 -2 18 -6 Z`;
+  const ears = `M23 -24 L22 -36 L30 -29 Z M38 -29 L45 -37 L45 -24 Z`;
+  let fur = '';
+  for (let i = 0; i < 9; i++) fur += `M${f(-26 + i * 6)} ${f(-24 + Math.abs(i - 4) * 0.8)} l${f(-1.5 - r())} 5`;
+  const tail = `M-30 -2 C-40 4 -40 16 -36 26 C-34 32 -38 38 -42 40`;
+  return `<g transform="translate(${x} ${y}) scale(${dir} 1)" stroke="${SEPIA}" stroke-linecap="round" stroke-linejoin="round">
+    <path d="${tail}" fill="none" stroke-width="7" stroke="${SEPIA}" opacity=".75"/>
+    <path d="${tail}" fill="none" stroke-width="4.6" stroke="#d9c4a2"/>
+    <path d="${body}" fill="#dcc8a6" stroke-width="1.4"/>
+    <path d="${fur}" fill="none" stroke-width=".8" opacity=".7"/>
+    <path d="${ears}" fill="#dcc8a6" stroke-width="1.2"/>
+    <path d="${head}" fill="#dcc8a6" stroke-width="1.4"/>
+    <path d="M27 -15 Q30 -12.5 33 -15 M37 -15 Q40 -12.5 43 -15" fill="none" stroke-width="1.1"/>
+    <path d="M34.5 -10 l2 0 l-1 1.4 z" fill="${ROSE}" stroke="none"/>
+    <path d="M24 -2 C22 3 30 3 30 0" fill="#dcc8a6" stroke-width="1"/>
+  </g>`;
 }
 
 // =====================================================================
