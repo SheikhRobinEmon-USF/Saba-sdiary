@@ -46,7 +46,12 @@ export interface Lane {
   house: number | null;
   box: number | null;
   bowl: number | null;
+  aquarium: number | null;
+  /** half-width of the aquarium on screen, in layer px */
+  aquariumHalf: number;
   yarnHome: number;
+  /** x of the middle of the page (where a reading cat sits) */
+  pageMid: number;
 }
 
 export interface WorldView {
@@ -54,13 +59,30 @@ export interface WorldView {
   setBowl(food: number): void;
   setHouse(occupant: number | null): void;
   pawPrint(x: number, facing: number): void;
+  placeFish(i: number, x: number, y: number, dir: number, tilt: number): void;
+  feedFish(): void;
+  rippleGlass(side: 'l' | 'r'): void;
+  /** a fish's position in client coordinates (for the cats' gaze) */
+  fishPoint(i: number): { x: number; y: number } | null;
 }
+
+/** Things happening in the writing that the cats can react to. */
+export type WritingEvent =
+  | { kind: 'word'; word: string }
+  | { kind: 'sentence' }
+  | { kind: 'paragraph' }
+  | { kind: 'erase'; count: number }
+  | { kind: 'typed'; count: number };
 
 export interface DirectorEnv {
   lastTyped(): number;
   quill(): { x: number; y: number; active: boolean } | null;
   heart(x: number, y: number): void;
-  sound(kind: 'purr' | 'chirp' | 'meow', cat: number): void;
+  sound(kind: 'purr' | 'chirp' | 'meow' | 'chatter', cat: number): void;
+  /** Press a small inky paw print onto the page beside the latest words. */
+  stamp(): boolean;
+  /** The recipient's name, lower-case (the cats know it). */
+  name: string;
   /** Whether the periodic meows (ambient sound) are on. */
   meows(): boolean;
   /** 'lively': free to roam; 'calm': mostly rest, move only when played with. */
@@ -128,6 +150,11 @@ class Cat {
   tailT = Math.random() * 10000;
   inside: Place = null;
   hunger = rnd(0.3, 0.8);
+  /** index of the fish she is watching, if any */
+  watch: number | null = null;
+  /** something she means to do once the writing pauses */
+  intent: string | null = null;
+  lastReact = 0;
   constructor(
     public index: number,
     public view: CatView,
@@ -165,6 +192,11 @@ export class CatDirector {
   private houseOwner: number | null = null;
   private boxOwner: number | null = null;
   private chaser: Cat | null = null;
+  private fish = [0, 1, 2].map((i) => ({ x: 50 + i * 35, y: 46 + i * 14, vx: (i % 2 ? -1 : 1) * 0.02, vy: 0, tx: 80, ty: 60, dir: i % 2 ? -1 : 1, wait: 0 }));
+  private foodUntil = 0;
+  private foodX = 88;
+  private written = 0;
+  private lastRead = performance.now();
 
   constructor(
     views: [CatView, CatView],
@@ -388,7 +420,9 @@ export class CatDirector {
         if (now > this.socialAt) this.social(now, false);
       }
       if (now > this.meowAt) this.ambientMeow(now, typing);
+      if (!typing) this.maybeRead(now);
       this.stepYarn(dt);
+      this.stepFish(dt, now);
       for (const c of this.cats) {
         this.advance(c, dt, typing);
         this.render(c, dt);
@@ -573,7 +607,8 @@ export class CatDirector {
     const h = !sleeping && c.pose.eye > 0.5 ? c.view.headPoint() : null;
     if (h) {
       let target: { x: number; y: number } | null = null;
-      if (Math.abs(this.yarn.vx) > 0.03 || this.yarn.dragging) {
+      if (c.watch !== null) target = this.world.fishPoint(c.watch);
+      else if (Math.abs(this.yarn.vx) > 0.03 || this.yarn.dragging) {
         const lane = this.env.lane();
         target = { x: h.x + (this.yarn.x - c.x), y: h.y + 50 * lane.scale };
       } else if (q && q.active) target = q;
@@ -609,6 +644,7 @@ export class CatDirector {
     c.steps = [];
     c.cur = null;
     c.vx = 0;
+    c.watch = null;
     if (this.chaser === c) this.chaser = null;
   }
 
@@ -971,6 +1007,12 @@ export class CatDirector {
   private choose(c: Cat, typing: boolean): void {
     const lane = this.env.lane();
     const calmMood = this.env.mood() === 'calm';
+    if (c.intent && !typing && !c.inside) {
+      const want = c.intent;
+      c.intent = null;
+      this.act(c, want);
+      return;
+    }
     if (c.inside === 'house') {
       this.run(c, 'napping in the cat house', [wait(rnd(6000, 12000)), ...(typing ? [] : this.exitHouseSteps(c))]);
       return;
@@ -1023,8 +1065,8 @@ export class CatDirector {
         : c.posture === 'loaf' || c.posture === 'sphinx'
           ? [['blink', 2], ['knead', 2], ['yawn', 1], ['ear', 1], ['sleep', 2], ['sit', 2], ['stand', 1], ['home', far ? 2 : 0], ['house', lane.house !== null ? 1.2 : 0], ['eat', c.hunger > 0.5 ? 1.5 : 0]]
           : c.posture === 'sit'
-            ? [['groom', 3], ['flick', 1], ['bat', 1], ['tilt', 1], ['yawn', 1], ['loaf', 1], ['stand', 1], ['home', far ? 2 : 0], ['yarn', 2 * toys], ['box', lane.box !== null ? 1.2 : 0], ['eat', c.hunger > 0.5 ? 1.5 : 0]]
-            : [['stretch', 2], ['wander', 2], ['sit', 2], ['pounce', 1], ['home', far ? 3 : 0], ['yarn', 2], ['box', lane.box !== null ? 1 : 0]];
+            ? [['groom', 3], ['flick', 1], ['bat', 1], ['tilt', 1], ['yawn', 1], ['loaf', 1], ['stand', 1], ['home', far ? 2 : 0], ['yarn', 2 * toys], ['box', lane.box !== null ? 1.2 : 0], ['eat', c.hunger > 0.5 ? 1.5 : 0], ['aquarium', lane.aquarium !== null ? 2.2 : 0]]
+            : [['stretch', 2], ['wander', 2], ['sit', 2], ['pounce', 1], ['home', far ? 3 : 0], ['yarn', 2], ['box', lane.box !== null ? 1 : 0], ['aquarium', lane.aquarium !== null ? 2.4 : 0]];
     this.act(c, pick(options));
     c.hunger = Math.min(1, c.hunger + 0.06);
   }
@@ -1108,9 +1150,282 @@ export class CatDirector {
       case 'eat':
         this.run(c, 'trotting to the food bowl', this.eatSteps(c));
         break;
+      case 'aquarium':
+        this.run(c, 'going to watch the fish', this.aquariumSteps(c));
+        break;
+      case 'read':
+        this.run(c, 'coming to read what you wrote', this.readSteps(c));
+        break;
+      case 'comfort':
+        this.run(c, 'coming to sit with you', this.comfortSteps(c));
+        break;
       default:
         this.run(c, 'resting', [wait(2000)]);
     }
+  }
+
+  // ------------------------------------------------------ the aquarium
+
+  /** The writer sprinkles food: the fish rise to it and a cat comes to watch. */
+  feedFish(): void {
+    this.world.feedFish();
+    this.foodUntil = performance.now() + 4800;
+    this.foodX = rnd(66, 108);
+    if (this.reduced) return;
+    this.played();
+    const c = this.nearest(this.env.lane().aquarium ?? 0, (k) => !k.inside && k.watch === null);
+    if (c) {
+      this.interrupt(c);
+      if (!c.awake) this.env.sound('chirp', c.index);
+      this.act(c, 'aquarium');
+    }
+  }
+
+  private stepFish(dt: number, now: number): void {
+    const T = { x0: 22, x1: 154, y0: 32, y1: 90 };
+    const feeding = now < this.foodUntil;
+    for (let i = 0; i < this.fish.length; i++) {
+      const f = this.fish[i];
+      if (feeding) {
+        const fall = 1 - (this.foodUntil - now) / 4800;
+        f.tx = this.foodX + (i - 1) * 9;
+        f.ty = 30 + fall * 52;
+      } else if (f.wait > 0) {
+        f.wait -= dt;
+      } else if (Math.hypot(f.tx - f.x, f.ty - f.y) < 6) {
+        f.tx = rnd(T.x0 + 6, T.x1 - 6);
+        f.ty = rnd(T.y0 + 4, T.y1 - 6);
+        f.wait = rnd(0, 900);
+      }
+      const k = feeding ? 0.000016 : 0.0000065;
+      f.vx += (f.tx - f.x) * k * dt - f.vx * 0.0024 * dt;
+      f.vy += (f.ty - f.y) * k * dt - f.vy * 0.0032 * dt;
+      const sp = Math.hypot(f.vx, f.vy);
+      const max = feeding ? 0.06 : 0.035;
+      if (sp > max && sp > 0) {
+        f.vx *= Math.max(max / sp, 0.97);
+        f.vy *= Math.max(max / sp, 0.97);
+      }
+      f.x = clamp(f.x + f.vx * dt, T.x0, T.x1);
+      f.y = clamp(f.y + f.vy * dt, T.y0, T.y1);
+      if (Math.abs(f.vx) > 0.004) f.dir += (Math.sign(f.vx) - f.dir) * Math.min(1, dt / 160);
+      const tilt = clamp((f.vy / (Math.abs(f.vx) + 0.01)) * 18, -24, 24);
+      this.world.placeFish(i, f.x, f.y, f.dir, tilt);
+    }
+  }
+
+  /** A paw on the glass: fish dart away from that side. */
+  private tapGlass(side: 'l' | 'r'): void {
+    this.world.rippleGlass(side);
+    for (const f of this.fish) {
+      const away = side === 'l' ? 1 : -1;
+      f.vx += away * rnd(0.09, 0.14);
+      f.vy += rnd(-0.05, 0.05);
+      f.tx = side === 'l' ? rnd(110, 150) : rnd(26, 66);
+      f.wait = 0;
+    }
+  }
+
+  private aquariumSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    if (lane.aquarium === null) return this.go(c, 'sit');
+    const tank = lane.aquarium;
+    const side = c.x < tank ? -1 : 1;
+    const spot = clamp(tank + side * (lane.aquariumHalf + 62 * lane.scale), lane.min, lane.max);
+    const glass: 'l' | 'r' = side < 0 ? 'l' : 'r';
+    const s: Step[] = [
+      ...this.walkTo(c, spot),
+      call(() => {
+        c.facing = side < 0 ? 1 : -1;
+        c.watch = Math.floor(Math.random() * this.fish.length);
+      }),
+      this.label(c, 'watching the fish'),
+      ...this.go(c, 'sit', 500),
+      tw({ ...POSES.sit, pupilW: 2.6, earNear: 10, earFar: -4, headRot: POSES.sit.headRot + 6 }, 400),
+    ];
+    for (let i = 0; i < 4; i++) {
+      const what = pick<string>([['chatter', 2], ['paw', 2], ['flick', 1], ['switch', 1]]);
+      s.push(wait(rnd(1200, 2600)));
+      if (what === 'chatter')
+        s.push(
+          this.label(c, 'chattering at the fish'),
+          call(() => this.env.sound('chatter', c.index)),
+          tw({ mouth: 0.22 }, 70),
+          tw({ mouth: 0 }, 70),
+          tw({ mouth: 0.22 }, 70),
+          tw({ mouth: 0 }, 70),
+          tw({ mouth: 0.2 }, 70),
+          tw({ mouth: 0 }, 90),
+        );
+      else if (what === 'paw')
+        s.push(
+          this.label(c, 'pawing at the fish through the glass'),
+          tw(key('bat', { fnS: -96, fnE: -12, pupilW: 2.8 }), 220, out),
+          call(() => this.tapGlass(glass)),
+          tw({ fnS: -70, fnE: -20 }, 160),
+          tw({ ...POSES.sit, pupilW: 2.6, earNear: 10 }, 420),
+        );
+      else if (what === 'flick') s.push(call(() => (c.flick = 18)));
+      else s.push(call(() => (c.watch = ((c.watch ?? 0) + 1) % this.fish.length)));
+    }
+    s.push(wait(rnd(1500, 3000)), call(() => (c.watch = null)), this.label(c, 'done fish-watching (for now)'), ...this.slowBlink());
+    return s;
+  }
+
+  // ------------------------------------------------------ the writing
+
+  /** The writer typed, finished a word, a sentence or a paragraph, or erased. */
+  react(ev: WritingEvent): void {
+    if (this.reduced) return;
+    const now = performance.now();
+    if (ev.kind === 'typed') {
+      this.written += ev.count;
+      return;
+    }
+    const awake = this.cats.filter((c) => c.awake && c.inside !== 'house' && !c.busyMoving);
+    const ready = (c: Cat) => now - c.lastReact > 2500;
+    const watcher = awake.filter(ready).sort((a, b) => Number(b.action.includes('watch')) - Number(a.action.includes('watch')))[0];
+    const now2 = (c: Cat, action: string, steps: Step[]) => {
+      // never cut into a walk, a hop or a synchronised greeting
+      if (c.busyMoving || c.cur?.kind === 'until') return;
+      c.lastReact = now;
+      const resume = c.cur && c.cur.kind !== 'call' ? [c.cur] : [];
+      c.cur = null;
+      c.from = { ...c.pose };
+      c.steps.unshift(this.label(c, action), ...steps, ...resume);
+    };
+    if (ev.kind === 'sentence') {
+      if (watcher && Math.random() < 0.4) now2(watcher, 'approving your sentence with a slow blink', this.slowBlink());
+      return;
+    }
+    if (ev.kind === 'paragraph') {
+      if (watcher && Math.random() < 0.5) now2(watcher, 'stretching a paw for the new paragraph', [tw({ earNear: -14 }, 120), tw({ earNear: 0 }, 180), ...(Math.random() < 0.4 ? this.yawnSteps(watcher) : [])]);
+      return;
+    }
+    if (ev.kind === 'erase') {
+      if (watcher && ev.count >= 12) now2(watcher, 'tilting her head at the crossing-out', [tw({ headRot: watcher.pose.headRot + 14, earNear: 12 }, 300, out), wait(700), tw({ headRot: watcher.pose.headRot, earNear: 0 }, 400)]);
+      return;
+    }
+    const w = ev.word.toLowerCase().replace(/[^a-z']/g, '').replace(/'s$/, '');
+    if (!w) return;
+    const name = this.env.name.toLowerCase();
+    const heartFrom = (c: Cat) => {
+      const h = c.view.headPoint();
+      if (h) this.env.heart(h.x, h.y - 16);
+    };
+    const all = (fn: (c: Cat) => void) => this.cats.filter((c) => c.inside !== 'house' && ready(c)).forEach(fn);
+    if (/^(cat|cats|kitty|kitties|kitten|kittens|meow|meows|purr|purrs|purring|paw|paws|whisker|whiskers|tabby|tuxedo|feline|mew)$/.test(w)) {
+      all((c) => {
+        if (!c.awake) {
+          now2(c, 'heard you write about cats (in her sleep)', [tw({ earNear: -16, earFar: 8 }, 120), tw({ earNear: 0, earFar: 0 }, 200)]);
+          return;
+        }
+        now2(c, 'perking up: you wrote about cats', [tw({ earNear: 12, earFar: -8, pupilW: 2.5, headRot: c.pose.headRot + 10 }, 260, out), call(() => heartFrom(c)), wait(600), tw({ earNear: 0, earFar: 0, pupilW: 1.6, headRot: c.pose.headRot }, 420)]);
+      });
+      const singer = awake[0];
+      if (singer && this.env.meows()) singer.steps.push(...this.meowSteps(singer));
+      return;
+    }
+    if (name && w === name) {
+      all((c) => now2(c, 'hearing a name she loves', [...(c.awake ? [] : [tw({ eye: 0.6 }, 300)]), call(() => heartFrom(c)), ...this.slowBlink()]));
+      return;
+    }
+    if (/^(love|loved|loving|lovely|heart|hearts|darling|dear|sweetheart|kiss|kisses|hug|hugs|adore|beloved)$/.test(w)) {
+      all((c) => now2(c, 'feeling the love in your words', [call(() => heartFrom(c)), ...(c.awake ? this.slowBlink() : [])]));
+      return;
+    }
+    if (/^(fish|fishes|fishy|goldfish|aquarium|tuna|salmon|sushi|sardine|sardines)$/.test(w) && watcher) {
+      now2(watcher, 'thinking about fish', [tw({ tongue: 1, pupilW: 2.6 }, 220), tw({ tongue: 0 }, 200), tw({ tongue: 1 }, 200), tw({ tongue: 0, pupilW: 1.8 }, 260)]);
+      watcher.intent = 'aquarium';
+      return;
+    }
+    if (/^(food|hungry|dinner|lunch|breakfast|snack|snacks|treat|treats|eat|eating|supper|milk)$/.test(w) && watcher) {
+      now2(watcher, 'licking her lips — did you say food?', [tw({ tongue: 1 }, 220), tw({ tongue: 0 }, 220)]);
+      watcher.intent = 'eat';
+      watcher.hunger = 1;
+      return;
+    }
+    if (/^(play|playing|toy|toys|yarn|ball|game|games|chase)$/.test(w) && watcher) {
+      now2(watcher, 'wanting to play', [call(() => (watcher.flick = 20)), tw({ pupilW: 2.7 }, 300), wait(500)]);
+      watcher.intent = 'yarn';
+      return;
+    }
+    if (/^(sleep|sleepy|sleeping|tired|nap|naps|night|bed|dream|dreams|dreaming|yawn)$/.test(w) && watcher) {
+      now2(watcher, 'yawning along with you', this.yawnSteps(watcher));
+      return;
+    }
+    if (/^(rain|raining|storm|stormy|thunder)$/.test(w)) {
+      all((c) => now2(c, 'flattening her ears at the thought of rain', [tw({ earNear: -22, earFar: 14 }, 250), wait(900), tw({ earNear: 0, earFar: 0 }, 400)]));
+      return;
+    }
+    if (/^(sad|cry|cried|crying|tears|lonely|hurt|miss|missed|missing|upset|anxious|worried|scared)$/.test(w)) {
+      const c = this.nearest(this.env.lane().pageMid, (k) => !k.inside) ?? null;
+      if (c) {
+        now2(c, 'sensing you might be sad', [tw({ earNear: -8, earFar: 6, eye: 0.7 }, 300), wait(500), tw({ earNear: 0, earFar: 0, eye: 1 }, 400)]);
+        c.intent = 'comfort';
+      }
+    }
+  }
+
+  /** After a good stretch of writing and a pause, a cat comes to read it. */
+  private maybeRead(now: number): void {
+    if (this.written < 60 || now - this.env.lastTyped() < 4500 || now - this.lastRead < 20000 || this.env.mood() === 'calm') return;
+    const c = this.nearest(this.env.lane().pageMid, (k) => !k.inside && !k.busyMoving && !k.intent && k.awake);
+    if (!c) return;
+    this.written = 0;
+    this.lastRead = now;
+    this.interrupt(c);
+    this.act(c, 'read');
+  }
+
+  private readSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const spot = clamp(lane.pageMid + (c.x < lane.pageMid ? -1 : 1) * 40 * lane.scale, lane.min, lane.max);
+    return [
+      ...this.walkTo(c, spot),
+      ...this.go(c, 'sit', 500),
+      this.label(c, 'reading what you wrote'),
+      tw({ ...POSES.sit, headRot: POSES.sit.headRot - 20, pupilY: -1, pupilW: 1.8, earNear: 6 }, 600),
+      tw({ headRot: POSES.sit.headRot - 26 }, 1200),
+      tw({ headRot: POSES.sit.headRot - 14 }, 1200),
+      wait(600),
+      ...this.slowBlink(),
+      this.label(c, 'signing your page with her paw'),
+      tw({ ...POSES.sit, fnS: -160, fnE: -20, headRot: POSES.sit.headRot - 18 }, 420, out),
+      call(() => {
+        if (this.env.stamp()) {
+          const h = c.view.headPoint();
+          if (h) this.env.heart(h.x, h.y - 18);
+        }
+      }),
+      wait(260),
+      tw({ ...POSES.sit }, 480),
+      this.label(c, 'pleased with her signature'),
+      wait(rnd(2500, 4000)),
+    ];
+  }
+
+  private comfortSteps(c: Cat): Step[] {
+    const lane = this.env.lane();
+    const spot = clamp(lane.pageMid, lane.min, lane.max);
+    return [
+      ...this.walkTo(c, spot),
+      ...this.go(c, 'sit', 500),
+      this.label(c, 'sitting close to keep you company'),
+      call(() => this.env.sound('purr', c.index)),
+      tw({ ...POSES.sit, headRot: POSES.sit.headRot - 12, pupilW: 2 }, 500),
+      ...this.slowBlink(),
+      call(() => {
+        const h = c.view.headPoint();
+        if (h) this.env.heart(h.x, h.y - 16);
+      }),
+      wait(2500),
+      ...this.slowBlink(),
+      tw({ ...POSES.loaf, eye: 0.6 }, 900),
+      call(() => this.setPosture(c, 'loaf')),
+      this.label(c, 'keeping you company'),
+      wait(rnd(8000, 12000)),
+    ];
   }
 
   private leave(c: Cat): void {
@@ -1130,6 +1445,8 @@ export class CatDirector {
     if (this.env.mood() === 'calm' && !forced) return;
     const [a, b] = Math.random() < 0.5 ? this.cats : [this.cats[1], this.cats[0]];
     if (a.inside || b.inside === 'house' || a.busyMoving || b.busyMoving || this.chaser) return;
+    // don't interrupt a cat who is reading, comforting, or about to do something she wants to
+    if (this.cats.some((c) => c.intent || /read|company|signature|fish/.test(c.action))) return;
     const lane = this.env.lane();
     const gap = 168 * lane.scale;
     const side = a.x < b.x ? -1 : 1;

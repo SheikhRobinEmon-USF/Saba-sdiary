@@ -12,7 +12,7 @@ import DeskScene from './components/DeskScene';
 import Quill, { type QuillHandle } from './components/Quill';
 import type { InkpotHandle } from './components/Inkpot';
 import Toolbar from './components/Toolbar';
-import CatsLayer from './components/CatsLayer';
+import CatsLayer, { type CatsLayerHandle } from './components/CatsLayer';
 import Modal from './components/Modal';
 import Dedication from './components/Dedication';
 import PrintSheet from './components/PrintSheet';
@@ -45,6 +45,7 @@ export default function App() {
   const quillRef = useRef<QuillHandle>(null);
   const inkpotRef = useRef<InkpotHandle>(null);
   const lastPose = useRef<QuillPose | null>(null);
+  const catsRef = useRef<CatsLayerHandle>(null);
   const quillClient = useRef<{ x: number; y: number; active: boolean } | null>(null);
   const lastTyped = useRef(-1e9);
 
@@ -331,6 +332,7 @@ export default function App() {
             getInkpotPoint={getInkpotPoint}
             onReady={() => setReady(true)}
             dateLine={today}
+            onWriting={(ev) => catsRef.current?.react(ev)}
           />
         </DeskScene>
 
@@ -352,12 +354,14 @@ export default function App() {
 
         {prefs.cats !== 'hidden' && (
           <CatsLayer
+            ref={catsRef}
+            onStamp={() => editorRef.current?.stampPaw() ?? false}
             reducedMotion={reduced}
             mood={prefs.cats === 'calm' ? 'calm' : 'lively'}
             meows={() => sound.ambientOn}
             lastTyped={() => lastTyped.current}
             quill={() => quillClient.current}
-            onSound={(k, i) => (k === 'purr' ? sound.purr() : k === 'chirp' ? sound.chirp() : sound.meow(i))}
+            onSound={(k, i) => (k === 'purr' ? sound.purr() : k === 'chirp' ? sound.chirp() : k === 'chatter' ? sound.chatter() : sound.meow(i))}
           />
         )}
 

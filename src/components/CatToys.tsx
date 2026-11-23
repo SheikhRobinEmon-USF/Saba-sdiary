@@ -12,7 +12,12 @@ export const TOY_SIZES = {
   box: { w: 124, h: 84 },
   bowl: { w: 76, h: 36 },
   yarn: { w: 44, h: 38 },
+  aquarium: { w: 176, h: 124 },
 } as const;
+
+/** Swimmable area inside the aquarium, in its own SVG units. */
+export const TANK = { x0: 22, x1: 154, y0: 32, y1: 90 };
+export const FISH_COLOURS = ['#e8a07c', '#d98aa0', '#efc070'];
 
 export function HouseArt({ occupant }: { occupant: 'tabby' | 'tuxedo' | null }) {
   const iris = occupant === 'tuxedo' ? '#c9cf7a' : '#e0b96a';
@@ -149,6 +154,87 @@ export function YarnThread() {
   return (
     <svg className="yarn-thread" viewBox="0 0 60 20" width="60" height="20" aria-hidden="true" focusable="false">
       <path d="M2 16 C14 4 22 20 34 12 C42 7 50 15 58 10" fill="none" stroke="#c0788a" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
+ * A small glass aquarium on a wooden stand: water, sand, swaying weeds,
+ * rising bubbles and three goldfish. The fish groups are positioned by the
+ * director each frame through `fishRef`.
+ */
+export function AquariumArt({ fishRef, feeds }: { fishRef: (i: number) => (el: SVGGElement | null) => void; feeds: number }) {
+  return (
+    <svg viewBox="0 0 176 124" width="176" height="124" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="aqWater" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#c9dccf" stopOpacity=".85" />
+          <stop offset="1" stopColor="#8fae9c" stopOpacity=".9" />
+        </linearGradient>
+        <linearGradient id="aqWood" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#8a5f3e" />
+          <stop offset="1" stopColor="#5f3f29" />
+        </linearGradient>
+        <clipPath id="aqClip">
+          <path d="M12 24 H164 V104 H12 Z" />
+        </clipPath>
+      </defs>
+      <ellipse cx="88" cy="121" rx="84" ry="4" fill="#392a24" opacity=".22" />
+      {/* stand */}
+      <path d="M4 104 H172 V116 H4 Z" fill="url(#aqWood)" stroke={LINE} strokeWidth="1.4" />
+      <path d="M10 116 V122 M166 116 V122" stroke={LINE} strokeWidth="4" strokeLinecap="round" />
+      <path d="M8 109 H168" stroke="#c9a27a" strokeWidth=".8" opacity=".6" />
+      <g clipPath="url(#aqClip)">
+        <path d="M12 24 H164 V104 H12 Z" fill="url(#aqWater)" />
+        {/* light rays */}
+        <path d="M40 24 L22 104 L34 104 L52 24 Z M100 24 L86 104 L94 104 L108 24 Z" fill="#fff" opacity=".1" />
+        {/* sand and pebbles */}
+        <path d="M12 96 C40 92 60 99 88 95 C116 91 136 98 164 94 V104 H12 Z" fill="#dcc79f" stroke={LINE} strokeWidth=".8" />
+        {[20, 34, 58, 75, 120, 141, 152].map((x, i) => (
+          <ellipse key={i} cx={x} cy={98 + (i % 3)} rx={2.6 + (i % 2)} ry="1.8" fill={i % 2 ? '#b69a69' : '#c88f9d'} stroke={LINE} strokeWidth=".5" />
+        ))}
+        {/* weeds */}
+        <g className="aq-weed" style={{ transformOrigin: '30px 98px' }}>
+          <path d="M30 98 C26 86 34 78 29 66 C25 58 31 50 28 42" fill="none" stroke="#6f8459" strokeWidth="3.2" strokeLinecap="round" />
+          <path d="M33 98 C36 88 31 80 36 70 C40 62 35 56 38 50" fill="none" stroke="#86996a" strokeWidth="2.6" strokeLinecap="round" />
+        </g>
+        <g className="aq-weed aq-weed-2" style={{ transformOrigin: '138px 96px' }}>
+          <path d="M138 96 C142 84 134 76 140 64 C144 56 138 50 141 44" fill="none" stroke="#6f8459" strokeWidth="3.2" strokeLinecap="round" />
+          <path d="M134 96 C131 88 137 82 132 74" fill="none" stroke="#86996a" strokeWidth="2.6" strokeLinecap="round" />
+        </g>
+        {/* a little ceramic heart on the sand */}
+        <path d="M100 98 C93 93 89 90 89 86 C89 84 91 82 93 82 C95 82 97 83.3 100 86 C103 83.3 105 82 107 82 C109 82 111 84 111 86 C111 90 107 93 100 98 Z" fill="#c88f9d" stroke={LINE} strokeWidth=".9" />
+        {/* food flakes, re-sprinkled on every feed */}
+        <g key={feeds} className={feeds ? 'aq-food is-falling' : 'aq-food'}>
+          {[70, 78, 86, 94, 102, 82, 90].map((x, i) => (
+            <rect key={i} x={x} y="24" width="2.4" height="1.6" rx=".6" fill="#b5703f" style={{ animationDelay: `${i * 90}ms` }} />
+          ))}
+        </g>
+        {/* fish */}
+        {FISH_COLOURS.map((col, i) => (
+          <g key={i} ref={fishRef(i)} transform={`translate(${50 + i * 35} ${50 + i * 12})`}>
+            <g className="fish-body">
+              <path d="M-10 0 L-16 -5.5 L-15 0 L-16 5.5 Z" fill={col} stroke={LINE} strokeWidth=".8" strokeLinejoin="round" />
+              <ellipse cx="0" cy="0" rx="9.5" ry="5.6" fill={col} stroke={LINE} strokeWidth=".9" />
+              <path d="M-2 -5 C0 -8.5 4 -8.5 5 -5" fill={col} stroke={LINE} strokeWidth=".7" />
+              <path d="M-3 -4 C-1 0 -1 2 -3 4 M1 -4.5 C3 0 3 2 1 4.5" fill="none" stroke={LINE} strokeWidth=".5" opacity=".55" />
+              <circle cx="5.2" cy="-1.2" r="1.3" fill="#1d1310" />
+              <circle cx="5.6" cy="-1.6" r=".4" fill="#fff" />
+            </g>
+          </g>
+        ))}
+        {/* bubbles */}
+        {[[46, 0], [52, 1.4], [124, 0.7], [118, 2.2], [130, 3.1]].map(([x, d], i) => (
+          <circle key={i} className="aq-bubble" cx={x} cy="94" r={1.4 + (i % 3) * 0.5} fill="none" stroke="#f4fbf6" strokeWidth=".7" style={{ animationDelay: `${d}s` }} />
+        ))}
+        <path className="aq-surface" d="M12 26 C30 24 48 28 66 26 C84 24 102 28 120 26 C138 24 152 28 164 26" fill="none" stroke="#f4fbf6" strokeWidth="1" opacity=".7" />
+      </g>
+      {/* glass and rim */}
+      <path d="M12 24 H164 V104 H12 Z" fill="none" stroke={LINE} strokeWidth="1.6" />
+      <path d="M20 32 L20 78 M26 30 L26 46" stroke="#fff" strokeWidth="2" opacity=".45" strokeLinecap="round" />
+      <path d="M7 18 H169 V25 H7 Z" fill="url(#aqWood)" stroke={LINE} strokeWidth="1.3" />
+      <path className="aq-ripple-l" d="M14 40 C18 50 18 60 14 70" fill="none" stroke="#fff" strokeWidth="1.6" opacity="0" />
+      <path className="aq-ripple-r" d="M162 40 C158 50 158 60 162 70" fill="none" stroke="#fff" strokeWidth="1.6" opacity="0" />
     </svg>
   );
 }

@@ -31,6 +31,8 @@ export const journalConfig = {
     ],
     signature: 'with love',
   },
+  /** How big the cats are drawn (1 = the original size). */
+  catSize: 2,
   /** The two cats on the desk (coat: 'tabby' | 'tuxedo'). Labels are read by screen readers. */
   cats: [
     { coat: 'tabby', label: 'The cream tabby with the pink ribbon' },

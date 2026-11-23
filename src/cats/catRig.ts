@@ -147,7 +147,7 @@ export interface RigParts {
   mouthClosed: SVGElement;
   tongue: SVGGElement;
   legs: Record<'fn' | 'ff' | 'hn' | 'hf', { top: SVGGElement; upper: SVGElement; lower: SVGGElement; lowerShape: SVGElement }>;
-  tail: SVGPathElement[];
+  tail: { shape: SVGPathElement; fur: SVGPathElement | null; rings: SVGPathElement | null };
 }
 
 const f = (n: number) => (Math.round(n * 100) / 100).toString();
@@ -190,6 +190,57 @@ export function applyPose(parts: RigParts, p: Pose): void {
   leg('hn', HIND_NEAR.x, HIND_NEAR.y, p.hnH, p.hnK, 1);
   leg('hf', HIND_FAR.x, HIND_FAR.y, p.hfH, p.hfK, 1);
 
-  const d = smoothPath(tailPoints(p));
-  for (const path of parts.tail) path.setAttribute('d', d);
+  const t2 = tailGeometry(tailPoints(p));
+  parts.tail.shape.setAttribute('d', t2.outline);
+  parts.tail.fur?.setAttribute('d', t2.fur);
+  parts.tail.rings?.setAttribute('d', t2.rings);
+}
+
+/**
+ * A tapered, fluffy tail around the centre line: outline (filled), little fur
+ * tufts along its sides, and cross-bands for tabby rings.
+ */
+export function tailGeometry(pts: [number, number][]): { outline: string; fur: string; rings: string } {
+  const n = pts.length - 1;
+  const left: [number, number][] = [];
+  const right: [number, number][] = [];
+  const norms: [number, number][] = [];
+  const dirs: [number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n, i + 1)];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    const m = Math.hypot(dx, dy) || 1;
+    dx /= m;
+    dy /= m;
+    dirs.push([dx, dy]);
+    norms.push([-dy, dx]);
+    // thick at the base, a touch fuller again near the fluffy tip
+    const u = i / n;
+    const w = 5.6 - 2.4 * u + 0.9 * Math.sin(Math.PI * Math.min(1, u * 1.15)) * u;
+    left.push([pts[i][0] + norms[i][0] * w, pts[i][1] + norms[i][1] * w]);
+    right.push([pts[i][0] - norms[i][0] * w, pts[i][1] - norms[i][1] * w]);
+  }
+  const end = pts[n];
+  const tip: [number, number] = [end[0] + dirs[n][0] * 4.5, end[1] + dirs[n][1] * 4.5];
+  const ring = [...left, tip, ...right.slice().reverse()];
+  const outline = smoothPath(ring) + 'Z';
+  let fur = '';
+  for (let i = 3; i <= n; i++) {
+    for (const [side, sgn] of [[left, 1], [right, -1]] as const) {
+      const q = side[i];
+      const nx = norms[i][0] * sgn, ny = norms[i][1] * sgn;
+      fur += `M${f(q[0])} ${f(q[1])}l${f(nx * 2.2 - dirs[i][0] * 2.6)} ${f(ny * 2.2 - dirs[i][1] * 2.6)}`;
+    }
+  }
+  fur += `M${f(tip[0])} ${f(tip[1])}l${f(dirs[n][0] * 2.4)} ${f(dirs[n][1] * 2.4)}`;
+  let rings = '';
+  for (let i = 2; i <= n; i += 1.5) {
+    const k = Math.floor(i);
+    const a = left[k], b = right[k];
+    const c: [number, number] = [pts[k][0] + dirs[k][0] * 2.4, pts[k][1] + dirs[k][1] * 2.4];
+    rings += `M${f(a[0])} ${f(a[1])}Q${f(c[0])} ${f(c[1])} ${f(b[0])} ${f(b[1])}`;
+  }
+  return { outline, fur, rings };
 }

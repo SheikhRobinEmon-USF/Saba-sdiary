@@ -274,6 +274,28 @@ class SoundBoard {
     trill.stop(now + 0.26);
   }
 
+  /** The excited "ek-ek-ek" chatter of a cat watching fish (or birds). */
+  chatter(): void {
+    if (!this.enabled) return;
+    const ctx = this.ensure();
+    if (!ctx || !this.master) return;
+    const start = ctx.currentTime + 0.02;
+    for (let i = 0; i < 5; i++) {
+      const t = start + i * 0.085 + Math.random() * 0.015;
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(1250 + Math.random() * 250, t);
+      o.frequency.exponentialRampToValueAtTime(820, t + 0.05);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.045, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 0.07);
+    }
+  }
+
   purr(): void {
     if (!this.enabled) return;
     const ctx = this.ensure();

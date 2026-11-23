@@ -372,6 +372,45 @@ test.describe('scene, sound, motion and accessibility', () => {
     await expect.poll(async () => (await world()).bowl, { timeout: 15000 }).toBeLessThan(1);
   });
 
+  test('the cats react to the writing and a reading cat signs the page', async ({ page }) => {
+    await openDiary(page);
+    const actions = () => page.evaluate(() => (window as unknown as { __cats: { info(): { action: string }[] } }).__cats.info().map((c) => c.action));
+    await editor(page).click();
+    await page.keyboard.type('Today my cat ', { delay: 30 });
+    await expect.poll(async () => (await actions()).join('|'), { timeout: 3000 }).toMatch(/cats/);
+    await page.keyboard.type('and I watched the rain fall over the garden. The evening was long and gentle and quiet.', { delay: 4 });
+    await settle(page);
+    // ask a cat to come and read now rather than waiting for the pause
+    await page.evaluate(() => (window as unknown as { __cats: { perform(i: number, n: string): void } }).__cats.perform(0, 'read'));
+    await expect(page.locator('.page-stamp')).toHaveCount(1, { timeout: 15000 });
+    // the stamp is decoration only: the text is untouched and it fades once writing resumes
+    await expect(editor(page)).toHaveValue(/long and gentle and quiet\.$/);
+    await page.keyboard.type(' More.');
+    await expect(page.locator('.page-stamp')).toHaveCount(0, { timeout: 4000 });
+  });
+
+  test('the aquarium: fish swim, feeding brings a cat to watch, and writing stays clear of the cats', async ({ page }) => {
+    await openDiary(page);
+    const fishPos = () => page.locator('.toy-aquarium g[transform]').first().getAttribute('transform');
+    const a = await fishPos();
+    await page.waitForTimeout(800);
+    expect(await fishPos()).not.toBe(a);
+    await page.getByRole('button', { name: /Aquarium/ }).focus();
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __cats: { info(): { action: string }[] } }).__cats.info().some((c) => /fish/.test(c.action))), { timeout: 12000 })
+      .toBe(true);
+    const zone = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cat-zone')));
+    expect(zone).toBeGreaterThan(40);
+    // the page's scroll area ends above the cats' heads
+    const ok = await page.evaluate(() => {
+      const sc = document.querySelector('.sheet-scroll')!.getBoundingClientRect();
+      const tb = document.querySelector('.toolbar')!.getBoundingClientRect();
+      return sc.bottom < tb.top - 40;
+    });
+    expect(ok).toBe(true);
+  });
+
   test('cat settings: calm keeps them resting, hidden removes them', async ({ page }) => {
     await openDiary(page);
     await page.getByRole('button', { name: 'Settings' }).click();

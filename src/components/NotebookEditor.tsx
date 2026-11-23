@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { HandwritingEngine, type EditKind, type QuillPose } from '../handwriting/handwritingEngine';
 import { journalConfig } from '../config/journalConfig';
+import type { WritingEvent } from '../cats/catDirector';
 
 export interface NotebookEditorHandle {
   getText(): string;
@@ -12,6 +13,8 @@ export interface NotebookEditorHandle {
   caretScenePoint(): { x: number; y: number } | null;
   contentElement(): HTMLElement | null;
   scrollerElement(): HTMLElement | null;
+  /** Press a small inky paw print beside the latest words (decorative, never saved). */
+  stampPaw(): boolean;
 }
 
 interface Props {
@@ -27,6 +30,8 @@ interface Props {
   onReady?(): void;
   onBlur?(): void;
   dateLine: string;
+  /** Words, sentences, paragraphs and erasures as they happen (for the cats). */
+  onWriting?(ev: WritingEvent): void;
 }
 
 function kindFor(inputType: string | undefined, insertedLen: number): EditKind {
@@ -55,6 +60,7 @@ const NotebookEditor = forwardRef<NotebookEditorHandle, Props>(function Notebook
   const svgRef = useRef<SVGSVGElement>(null);
   const fallbackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const stampsRef = useRef<HTMLDivElement>(null);
   const engine = useRef<HandwritingEngine | null>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -128,6 +134,33 @@ const NotebookEditor = forwardRef<NotebookEditorHandle, Props>(function Notebook
       else if (bottom > sc.scrollTop + sc.clientHeight) sc.scrollTop = bottom - sc.clientHeight + 12;
     };
 
+    // tell the cats what is happening in the writing (never the text itself)
+    const announce = (kind: EditKind, data: string, erased: number, value: string, caret: number) => {
+      const emit = propsRef.current.onWriting;
+      if (!emit) return;
+      if (erased > 0) {
+        emit({ kind: 'erase', count: erased });
+        return;
+      }
+      if (kind !== 'type' || !data) return;
+      emit({ kind: 'typed', count: data.length });
+      if (/[\s.,!?;:)"'”’—-]$/.test(data)) {
+        const m = /([A-Za-zÀ-ɏ']+)[\s.,!?;:)"'”’—-]+$/.exec(value.slice(Math.max(0, caret - 40), caret));
+        if (m) emit({ kind: 'word', word: m[1] });
+      }
+      if (/[.!?]/.test(data)) emit({ kind: 'sentence' });
+      if (data.includes('\n')) emit({ kind: 'paragraph' });
+    };
+    const fadeStamps = () => {
+      const host = stampsRef.current;
+      if (!host) return;
+      for (const el of host.children) {
+        if (el.classList.contains('fading')) continue;
+        el.classList.add('fading');
+        window.setTimeout(() => el.remove(), 1200);
+      }
+    };
+
     const onInput = (ev: Event) => {
       const e = engine.current;
       const ie = ev as InputEvent;
@@ -136,9 +169,13 @@ const NotebookEditor = forwardRef<NotebookEditorHandle, Props>(function Notebook
         if (composing || ie.isComposing) {
           e.setText(value, 'provisional', ta.selectionEnd);
         } else {
-          const inserted = Math.max(0, value.length - e.currentText.length);
-          e.setText(value, kindFor(ie.inputType, inserted), ta.selectionEnd);
+          const before = e.currentText.length;
+          const inserted = Math.max(0, value.length - before);
+          const kind = kindFor(ie.inputType, inserted);
+          e.setText(value, kind, ta.selectionEnd);
+          announce(kind, ie.data ?? (ie.inputType === 'insertLineBreak' ? '\n' : ''), before - value.length, value, ta.selectionEnd);
         }
+        fadeStamps();
       }
       propsRef.current.onTextChange(value);
       requestAnimationFrame(ensureCaretVisible);
@@ -224,6 +261,31 @@ const NotebookEditor = forwardRef<NotebookEditorHandle, Props>(function Notebook
     },
     contentElement: () => contentRef.current,
     scrollerElement: () => scrollerRef.current,
+    stampPaw: () => {
+      const ta = textareaRef.current;
+      const e = engine.current;
+      const content = contentRef.current;
+      const host = stampsRef.current;
+      if (!ta || !e || !content || !host || !ta.value.trim()) return false;
+      const p = e.caretPoint(ta.value.trimEnd().length);
+      if (!p) return false;
+      const cs = getComputedStyle(content.querySelector('.editor-mirror')!);
+      const fs = parseFloat(cs.fontSize) || 40;
+      const padR = parseFloat(cs.paddingRight) || 40;
+      let x = p.x + fs * 0.35;
+      if (x > content.clientWidth - padR - fs * 0.2) x = content.clientWidth - padR + 4;
+      const stamp = document.createElement('span');
+      stamp.className = 'page-stamp';
+      stamp.style.left = `${x.toFixed(1)}px`;
+      stamp.style.top = `${(p.y - fs * 0.62).toFixed(1)}px`;
+      stamp.style.setProperty('--r', `${Math.round(Math.random() * 30 - 15)}deg`);
+      host.append(stamp);
+      window.setTimeout(() => {
+        stamp.classList.add('fading');
+        window.setTimeout(() => stamp.remove(), 1200);
+      }, 40000);
+      return true;
+    },
   }));
 
   return (
@@ -254,6 +316,7 @@ const NotebookEditor = forwardRef<NotebookEditorHandle, Props>(function Notebook
           <div className="editor-mirror" ref={mirrorRef} aria-hidden="true" />
           <svg className="ink-layer" ref={svgRef} aria-hidden="true" focusable="false" />
           <div className="fallback-layer" ref={fallbackRef} aria-hidden="true" />
+          <div className="page-stamps" ref={stampsRef} aria-hidden="true" />
           <label className="visually-hidden" htmlFor="diary-text">
             Diary page. Type to write; the quill writes your words in ink.
           </label>

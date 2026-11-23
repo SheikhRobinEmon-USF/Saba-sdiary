@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import CatCompanion, { type CatHandle } from './CatCompanion';
-import { BowlArt, BoxBackArt, BoxFrontArt, HouseArt, TOY_SIZES, YarnArt } from './CatToys';
-import { CatDirector, type CatView, type DirectorEnv, type Lane, type WorldView } from '../cats/catDirector';
+import { AquariumArt, BowlArt, BoxBackArt, BoxFrontArt, HouseArt, TOY_SIZES, YarnArt } from './CatToys';
+import { CatDirector, type CatView, type DirectorEnv, type Lane, type WorldView, type WritingEvent } from '../cats/catDirector';
 import { journalConfig } from '../config/journalConfig';
 
 interface Props {
@@ -10,15 +10,21 @@ interface Props {
   meows(): boolean;
   lastTyped(): number;
   quill(): { x: number; y: number; active: boolean } | null;
-  onSound(kind: 'purr' | 'chirp' | 'meow', cat: number): void;
+  onSound(kind: 'purr' | 'chirp' | 'meow' | 'chatter', cat: number): void;
+  /** press a paw print beside the latest words; false if there is nothing to sign */
+  onStamp(): boolean;
+}
+
+export interface CatsLayerHandle {
+  react(ev: WritingEvent): void;
 }
 
 const FEET_X = 110;
 const FEET_Y = 140;
-/** toys are drawn a little smaller than the cats' own scale */
-const TOY = 0.82;
+/** toys are drawn relative to the cats' original size */
+const TOY = 0.82 * 1.25;
 
-type ToyName = 'house' | 'boxBack' | 'boxFront' | 'bowl' | 'yarn';
+type ToyName = 'house' | 'boxBack' | 'boxFront' | 'bowl' | 'yarn' | 'aquarium';
 
 /**
  * The cats' corner of the desk: two cats, a cat house, a cardboard box, a
@@ -26,7 +32,7 @@ type ToyName = 'house' | 'boxBack' | 'boxFront' | 'bowl' | 'yarn';
  * edge of the desk. Only painted shapes take pointer input, so the paper
  * stays fully writable; while someone types, the cats keep still.
  */
-export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill, onSound }: Props) {
+const CatsLayer = forwardRef<CatsLayerHandle, Props>(function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill, onSound, onStamp }, ref) {
   const layerRef = useRef<HTMLDivElement>(null);
   const printsRef = useRef<HTMLDivElement>(null);
   const wrapRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
@@ -37,15 +43,21 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
     boxFront: useRef<HTMLButtonElement>(null),
     bowl: useRef<HTMLButtonElement>(null),
     yarn: useRef<HTMLButtonElement>(null),
+    aquarium: useRef<HTMLButtonElement>(null),
   };
+  const fishRefs = useRef<(SVGGElement | null)[]>([]);
+  const toyScale = useRef(1);
+  const [feeds, setFeeds] = useState(0);
   const yarnBallRef = useRef<HTMLDivElement>(null);
   const director = useRef<CatDirector | null>(null);
-  const lane = useRef<Lane>({ y: 0, min: 0, max: 0, homes: [0, 0], scale: 1, house: null, box: null, bowl: null, yarnHome: 0 });
+  const lane = useRef<Lane>({ y: 0, min: 0, max: 0, homes: [0, 0], scale: 1, house: null, box: null, bowl: null, aquarium: null, aquariumHalf: 0, yarnHome: 0, pageMid: 0 });
   const [hearts, setHearts] = useState<{ id: number; x: number; y: number }[]>([]);
   const [houseCat, setHouseCat] = useState<number | null>(null);
   const [food, setFood] = useState(1);
-  const propsRef = useRef({ lastTyped, quill, onSound, mood, meows });
-  propsRef.current = { lastTyped, quill, onSound, mood, meows };
+  const propsRef = useRef({ lastTyped, quill, onSound, mood, meows, onStamp });
+  propsRef.current = { lastTyped, quill, onSound, mood, meows, onStamp };
+
+  useImperativeHandle(ref, () => ({ react: (ev) => director.current?.react(ev) }), []);
   const cats = journalConfig.cats;
 
   useEffect(() => {
@@ -60,63 +72,88 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
         return;
       }
       el.style.display = '';
-      const s = lane.current.scale * TOY;
+      const s = toyScale.current;
       el.style.transform = `translate3d(${(x - (size.w * s) / 2).toFixed(1)}px, ${(lane.current.y - size.h * s + 2 * s).toFixed(1)}px, 0) scale(${s.toFixed(3)})`;
     };
 
+    const setZone = (px: number) => document.documentElement.style.setProperty('--cat-zone', `${Math.round(px)}px`);
     const measure = () => {
       const L = layer.getBoundingClientRect();
       const tb = document.querySelector('.toolbar')?.getBoundingClientRect();
       const sheet = document.querySelector('.sheet')?.getBoundingClientRect();
-      if (!tb || !sheet || L.width === 0) return;
+      if (!tb || !sheet || L.width === 0) {
+        setZone(0);
+        return;
+      }
       const sl = sheet.left - L.left;
       const sr = sheet.right - L.left;
+      const size = journalConfig.catSize;
+      const w = (k: keyof typeof TOY_SIZES, t: number) => TOY_SIZES[k].w * t;
+      let next: Lane;
       if (L.width < 900) {
-        const scale = Math.max(0.5, Math.min(0.68, L.width / 640));
-        const t = scale * TOY;
+        const base = Math.max(0.5, Math.min(0.68, L.width / 640));
+        const scale = base * size;
+        const t = base * TOY;
+        toyScale.current = t;
         const left = sl + 4;
-        const right = sr - 8 - (L.width < 560 ? 62 : 84); // keep clear of the wax seal
-        const house = left + (TOY_SIZES.house.w * t) / 2;
-        const showBox = L.width >= 600;
-        const box = showBox ? right - (TOY_SIZES.box.w * t) / 2 : null;
-        const bowlX = (box !== null ? box - (TOY_SIZES.box.w * t) / 2 : right) - (TOY_SIZES.bowl.w * t) / 2 - 4;
-        const cat0 = house + (TOY_SIZES.house.w * t) / 2 + 52 * scale;
-        lane.current = {
+        const right = sr - 6;
+        const showHouse = L.width >= 600;
+        const showBox = L.width >= 720;
+        const aquarium = right - w('aquarium', t) / 2;
+        const house = showHouse ? left + w('house', t) / 2 : null;
+        const box = showBox ? left + w('house', t) + 8 + w('box', t) / 2 : null;
+        const groupEnd = box !== null ? box + w('box', t) / 2 : house !== null ? house + w('house', t) / 2 : left;
+        const bowl = groupEnd + 6 + w('bowl', t) / 2;
+        const midL = bowl + w('bowl', t) / 2;
+        const midR = aquarium - w('aquarium', t) / 2;
+        next = {
           y: tb.top - L.top + 3,
           scale,
-          min: left + 40 * scale,
-          max: right - 30 * scale,
-          homes: [cat0, Math.min(bowlX - 70 * scale, cat0 + 120 * scale)],
+          min: left + 64 * scale,
+          max: right - 64 * scale,
+          homes: [Math.max(left + 64 * scale, midL + (midR - midL) * 0.18), Math.min(right - 64 * scale, midL + (midR - midL) * 0.8)],
           house,
           box,
-          bowl: bowlX,
-          yarnHome: cat0 + 66 * scale,
+          bowl,
+          aquarium,
+          aquariumHalf: w('aquarium', t) / 2,
+          yarnHome: midL + (midR - midL) * 0.48,
+          pageMid: (sl + sr) / 2,
         };
       } else {
-        const gutter = sl;
-        const scale = Math.max(0.78, Math.min(1.32, gutter / 196));
-        const t = scale * TOY;
-        const houseW = TOY_SIZES.house.w * t;
-        const boxW = TOY_SIZES.box.w * t;
-        const house = 10 + houseW / 2;
-        const box = L.width - 10 - boxW / 2;
-        lane.current = {
+        const base = Math.max(0.78, Math.min(1.32, sl / 196));
+        const scale = base * size;
+        const t = base * TOY;
+        toyScale.current = t;
+        const house = 10 + w('house', t) / 2;
+        const box = 10 + w('house', t) + 10 + w('box', t) / 2;
+        const aquarium = L.width - 10 - w('aquarium', t) / 2;
+        const bowl = box + w('box', t) / 2 + 10 + w('bowl', t) / 2;
+        const midL = bowl + w('bowl', t) / 2;
+        const midR = aquarium - w('aquarium', t) / 2;
+        next = {
           y: tb.top - L.top + 4,
           scale,
-          min: 50 * scale,
-          max: L.width - 50 * scale,
-          homes: [house + houseW / 2 + 70 * scale, box - boxW / 2 - 72 * scale],
+          min: 66 * scale,
+          max: L.width - 66 * scale,
+          homes: [midL + (midR - midL) * 0.1, midL + (midR - midL) * 0.9],
           house,
           box,
-          bowl: Math.max(sl + 120 * scale, sr - 260 * scale),
-          yarnHome: house + houseW / 2 + 160 * scale,
+          bowl,
+          aquarium,
+          aquariumHalf: w('aquarium', t) / 2,
+          yarnHome: midL + (midR - midL) * 0.42,
+          pageMid: (sl + sr) / 2,
         };
       }
-      const l = lane.current;
-      placeToy('house', l.house);
-      placeToy('boxBack', l.box);
-      placeToy('boxFront', l.box);
-      placeToy('bowl', l.bowl);
+      lane.current = next;
+      // keep the writing above the cats: the page's scroll area stops at their heads
+      setZone(Math.max(0, sheet.bottom - L.top - (next.y - 100 * next.scale)));
+      placeToy('house', next.house);
+      placeToy('boxBack', next.box);
+      placeToy('boxFront', next.box);
+      placeToy('bowl', next.bowl);
+      placeToy('aquarium', next.aquarium);
     };
     measure();
 
@@ -151,11 +188,32 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
         const el = toyRefs.yarn.current;
         const ball = yarnBallRef.current;
         if (!el || !ball) return;
-        const s = lane.current.scale * TOY;
+        const s = toyScale.current;
         el.style.transform = `translate3d(${(x - (TOY_SIZES.yarn.w * s) / 2).toFixed(1)}px, ${(lane.current.y - TOY_SIZES.yarn.h * s + 2 * s).toFixed(1)}px, 0) scale(${s.toFixed(3)})`;
         ball.style.transform = `rotate(${((rot * 180) / Math.PI).toFixed(1)}deg)`;
       },
       setBowl: (f) => setFood(f),
+      placeFish: (i, x, y, dir, tilt) => {
+        const g = fishRefs.current[i];
+        if (!g) return;
+        const d = Math.abs(dir) < 0.15 ? Math.sign(dir || 1) * 0.15 : dir;
+        g.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) scale(${d.toFixed(2)} 1) rotate(${(tilt * Math.sign(d)).toFixed(1)})`);
+      },
+      feedFish: () => setFeeds((n) => n + 1),
+      rippleGlass: (side) => {
+        const el = toyRefs.aquarium.current;
+        if (!el) return;
+        el.dataset.ripple = '';
+        void el.offsetWidth;
+        el.dataset.ripple = side;
+      },
+      fishPoint: (i) => {
+        const el = toyRefs.aquarium.current;
+        const g = fishRefs.current[i];
+        if (!el || !g) return null;
+        const r = g.getBoundingClientRect();
+        return r.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      },
       setHouse: (occ) => setHouseCat(occ),
       pawPrint: (x, facing) => {
         const host = printsRef.current;
@@ -174,6 +232,8 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
       quill: () => propsRef.current.quill(),
       sound: (k, i) => propsRef.current.onSound(k, i),
       meows: () => propsRef.current.meows(),
+      stamp: () => propsRef.current.onStamp(),
+      name: journalConfig.recipientName,
       mood: () => propsRef.current.mood,
       heart: (x, y) => {
         const L = layer.getBoundingClientRect();
@@ -210,6 +270,7 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
       cancelAnimationFrame(raf);
       d.stop();
       director.current = null;
+      setZone(0);
     };
     // the director is created once; preference changes are read through propsRef
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -268,6 +329,15 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
       </button>
       <button
         type="button"
+        className="toy toy-aquarium"
+        ref={toyRefs.aquarium}
+        aria-label="Aquarium with three goldfish — tap to sprinkle fish food"
+        onClick={() => director.current?.feedFish()}
+      >
+        <AquariumArt fishRef={(i) => (el) => (fishRefs.current[i] = el)} feeds={feeds} />
+      </button>
+      <button
+        type="button"
         className="toy toy-yarn"
         ref={toyRefs.yarn}
         aria-label="Ball of yarn — tap to roll it, or drag and let go to throw it"
@@ -316,4 +386,6 @@ export default function CatsLayer({ reducedMotion, mood, meows, lastTyped, quill
       ))}
     </div>
   );
-}
+});
+
+export default CatsLayer;
