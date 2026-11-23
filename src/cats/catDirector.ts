@@ -154,7 +154,9 @@ class Cat {
   watch: number | null = null;
   /** something she means to do once the writing pauses */
   intent: string | null = null;
-  lastReact = 0;
+  lastReact = -1e9;
+  /** the last thing in the writing she reacted to (for tests and curious minds) */
+  reaction = '';
   constructor(
     public index: number,
     public view: CatView,
@@ -259,7 +261,7 @@ export class CatDirector {
   }
 
   info() {
-    return this.cats.map((c) => ({ action: c.action, posture: c.posture, x: Math.round(c.x), facing: c.facing, inside: c.inside }));
+    return this.cats.map((c) => ({ action: c.action, posture: c.posture, x: Math.round(c.x), facing: c.facing, inside: c.inside, reaction: c.reaction }));
   }
 
   world_info() {
@@ -411,7 +413,8 @@ export class CatDirector {
 
   private frame = (now: number): void => {
     if (!this.running) return;
-    const dt = Math.min(50, now - this.last);
+    // keep real-time pace even when frames are slow (busy or low-power devices)
+    const dt = Math.min(100, now - this.last);
     this.last = now;
     if (document.visibilityState === 'visible') {
       const typing = this.isTyping(now);
@@ -1289,6 +1292,7 @@ export class CatDirector {
       // never cut into a walk, a hop or a synchronised greeting
       if (c.busyMoving || c.cur?.kind === 'until') return;
       c.lastReact = now;
+      c.reaction = action;
       const resume = c.cur && c.cur.kind !== 'call' ? [c.cur] : [];
       c.cur = null;
       c.from = { ...c.pose };

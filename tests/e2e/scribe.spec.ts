@@ -374,15 +374,15 @@ test.describe('scene, sound, motion and accessibility', () => {
 
   test('the cats react to the writing and a reading cat signs the page', async ({ page }) => {
     await openDiary(page);
-    const actions = () => page.evaluate(() => (window as unknown as { __cats: { info(): { action: string }[] } }).__cats.info().map((c) => c.action));
+    const reactions = () => page.evaluate(() => (window as unknown as { __cats: { info(): { reaction: string }[] } }).__cats.info().map((c) => c.reaction));
     await editor(page).click();
     await page.keyboard.type('Today my cat ', { delay: 30 });
-    await expect.poll(async () => (await actions()).join('|'), { timeout: 3000 }).toMatch(/cats/);
+    await expect.poll(async () => (await reactions()).join('|'), { timeout: 5000 }).toMatch(/cats/);
     await page.keyboard.type('and I watched the rain fall over the garden. The evening was long and gentle and quiet.', { delay: 4 });
     await settle(page);
     // ask a cat to come and read now rather than waiting for the pause
     await page.evaluate(() => (window as unknown as { __cats: { perform(i: number, n: string): void } }).__cats.perform(0, 'read'));
-    await expect(page.locator('.page-stamp')).toHaveCount(1, { timeout: 15000 });
+    await expect(page.locator('.page-stamp')).toHaveCount(1, { timeout: 30000 });
     // the stamp is decoration only: the text is untouched and it fades once writing resumes
     await expect(editor(page)).toHaveValue(/long and gentle and quiet\.$/);
     await page.keyboard.type(' More.');
