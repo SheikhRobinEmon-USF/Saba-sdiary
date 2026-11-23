@@ -28,6 +28,11 @@ export const journalConfig = {
     ],
     signature: 'with love',
   },
+  /** The two cats on the desk (coat: 'tabby' | 'tuxedo'). Labels are read by screen readers. */
+  cats: [
+    { coat: 'tabby', label: 'The cream tabby with the pink ribbon' },
+    { coat: 'tuxedo', label: 'The little tuxedo cat with the bell' },
+  ] as { coat: 'tabby' | 'tuxedo'; label: string }[],
   /** LocalStorage document key (versioned). */
   storageKey: 'the-scribe:v1',
   /** File name stem for exports. */

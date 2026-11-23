@@ -4,24 +4,22 @@ import roseUrl from '../assets/art/rose.svg';
 import petalsUrl from '../assets/art/petals.svg';
 import botanicalUrl from '../assets/art/botanical-corner.svg';
 import Inkpot, { type InkpotHandle } from './Inkpot';
-import CatCompanion from './CatCompanion';
 import WaxSeal from './WaxSeal';
 
 interface Props {
   children: ReactNode;
   inkpotRef: Ref<InkpotHandle>;
   onSeal?(): void;
-  onCat?(): void;
   ambience: boolean;
 }
 
 /**
  * The illustrated desk: library wall and wooden desk behind, the parchment
  * sheet in the centre, the inkpot to the right and the cat curled up beside
- * the paper. Everything decorative is aria-hidden and ignores the pointer,
+ * the paper (the cats live in CatsLayer). Everything decorative is aria-hidden and ignores the pointer,
  * except the cat and the wax seal, which are real buttons.
  */
-export default function DeskScene({ children, inkpotRef, onSeal, onCat, ambience }: Props) {
+export default function DeskScene({ children, inkpotRef, onSeal, ambience }: Props) {
   return (
     <main className="scene" id="main">
       <div className="desk-bg" aria-hidden="true">
@@ -70,10 +68,6 @@ export default function DeskScene({ children, inkpotRef, onSeal, onCat, ambience
       <div className="desk-right">
         <Inkpot ref={inkpotRef} />
         <img className="desk-petals desk-petals-r" src={petalsUrl} alt="" aria-hidden="true" draggable={false} />
-      </div>
-
-      <div className="cat-spot">
-        <CatCompanion onPurr={onCat} />
       </div>
     </main>
   );

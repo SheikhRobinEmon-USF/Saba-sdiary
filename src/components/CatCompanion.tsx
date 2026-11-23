@@ -1,209 +1,238 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useRef, type ReactNode } from 'react';
+import { applyPose, POSES, type Pose, type RigParts } from '../cats/catRig';
 
-type Mood = 'asleep' | 'waking' | 'awake' | 'settling';
+export type Coat = 'tabby' | 'tuxedo';
+
+const COATS = {
+  tabby: {
+    fur: '#efe0c6', shade: '#d9c19b', line: '#50372d', stripe: '#8f6c52', paw: '#f4e8d2', chest: '#f7eedd',
+    ribbon: '#c88f9d', ribbonDark: '#794454', iris: '#b69a69', innerEar: '#f4dce1', nose: '#c88f9d', bell: null as string | null,
+  },
+  tuxedo: {
+    fur: '#5c4940', shade: '#47372f', line: '#2a1e18', stripe: null as string | null, paw: '#f6eee0', chest: '#f6eee0',
+    ribbon: '#794454', ribbonDark: '#4d2531', iris: '#b5b66a', innerEar: '#d9a6b2', nose: '#c88f9d', bell: '#c9a85c',
+  },
+};
+
+export interface CatHandle {
+  apply(p: Pose): void;
+  svg(): SVGSVGElement | null;
+  headElement(): SVGGElement | null;
+}
 
 interface Props {
-  onPurr?(): void;
+  coat: Coat;
+  id: string;
+  label: string;
+  action: string;
+  onTap(): void;
 }
 
 /**
- * A small sepia line-art cat, curled up beside the notebook with a dusty-pink
- * ribbon. Click or tap (or press Enter/Space when focused) to wake her: she
- * lifts her head, blinks, stretches a little, then settles back to sleep. Her
- * tail drifts now and then. Purely decorative for the journal: never touches
- * the text.
+ * One articulated sepia line-art cat (side view, facing right). The parent
+ * director animates it through `apply(pose)`; the button gives keyboard and
+ * screen-reader users the same "say hello" interaction as a tap.
  */
-export default function CatCompanion({ onPurr }: Props) {
-  const [mood, setMood] = useState<Mood>('asleep');
-  const [hearts, setHearts] = useState<number[]>([]);
-  const [tailSway, setTailSway] = useState(false);
-  const timers = useRef<number[]>([]);
-
-  const later = (ms: number, fn: () => void) => {
-    timers.current.push(window.setTimeout(fn, ms));
+const CatCompanion = forwardRef<CatHandle, Props>(function CatCompanion({ coat, id, label, action, onTap }, ref) {
+  void POSES;
+  const c = COATS[coat];
+  const r = useRef<Partial<Record<string, SVGElement | null>>>({});
+  const svgRef = useRef<SVGSVGElement>(null);
+  const set = (k: string) => (el: SVGElement | null) => {
+    r.current[k] = el;
   };
 
-  useEffect(() => {
-    // occasional, gentle tail movement while she sleeps
-    let t = 0;
-    const loop = () => {
-      t = window.setTimeout(() => {
-        setTailSway(true);
-        window.setTimeout(() => setTailSway(false), 2600);
-        loop();
-      }, 9000 + Math.random() * 9000);
-    };
-    loop();
-    const pending = timers.current;
-    return () => {
-      clearTimeout(t);
-      pending.forEach(clearTimeout);
-    };
-  }, []);
+  useImperativeHandle(ref, () => ({
+    apply(p: Pose) {
+      const g = r.current as Record<string, SVGElement>;
+      if (!g.root) return;
+      const legs = (k: string) => ({
+        top: g[`${k}Top`] as SVGGElement,
+        upper: g[`${k}Upper`],
+        lower: g[`${k}Lower`] as SVGGElement,
+        lowerShape: g[`${k}LowerShape`],
+      });
+      const parts: RigParts = {
+        root: g.root as SVGGElement,
+        body: g.body as SVGGElement,
+        head: g.head as SVGGElement,
+        earFar: g.earFar as SVGGElement,
+        earNear: g.earNear as SVGGElement,
+        eyes: [g.eye0 as SVGGElement, g.eye1 as SVGGElement],
+        pupils: [g.pupil0, g.pupil1],
+        eyesClosed: g.eyesClosed as SVGGElement,
+        mouthOpen: g.mouthOpen as SVGGElement,
+        mouthClosed: g.mouthClosed,
+        tongue: g.tongue as SVGGElement,
+        legs: { fn: legs('fn'), ff: legs('ff'), hn: legs('hn'), hf: legs('hf') },
+        tail: [g.tailOutline, g.tailFill, g.tailStripe].filter(Boolean) as SVGPathElement[],
+      };
+      applyPose(parts, p);
+    },
+    svg: () => svgRef.current,
+    headElement: () => (r.current.head as SVGGElement | undefined) ?? null,
+  }));
 
-  const wake = useCallback(() => {
-    if (mood !== 'asleep') return;
-    onPurr?.();
-    setMood('waking');
-    const id = Date.now();
-    setHearts((h) => [...h, id]);
-    later(1800, () => setHearts((h) => h.filter((x) => x !== id)));
-    later(700, () => setMood('awake'));
-    later(3600, () => setMood('settling'));
-    later(4600, () => setMood('asleep'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mood, onPurr]);
+  const S = { stroke: c.line, strokeWidth: 1.6, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const };
+  const grad = `${id}-fur`;
 
-  const eyesOpen = mood === 'waking' || mood === 'awake';
-  const label = eyesOpen ? 'The cat is awake and blinking at you' : 'A sleeping cat. Tap to wake her';
+  const frontLeg = (k: 'fn' | 'ff', far: boolean): ReactNode => (
+    <g ref={set(`${k}Top`)}>
+      <g ref={set(`${k}Upper`)}>
+        <path d="M-6.5 -6 L6.5 -6 L6 16.5 L-6 16.5 Z" fill={far ? c.shade : `url(#${grad})`} />
+        <path d="M-6.5 -2 L-6 16.5 M6.5 -2 L6 16.5" fill="none" {...S} />
+      </g>
+      <g ref={set(`${k}Lower`)}>
+        <g ref={set(`${k}LowerShape`)}>
+          <path d="M-6 -1 L6 -1 L5.5 16 L-5.5 16 Z" fill={far ? c.shade : coat === 'tuxedo' ? c.paw : `url(#${grad})`} />
+          <path d="M-6 0 L-5.5 16 M6 0 L5.5 16" fill="none" {...S} />
+        </g>
+        <g>
+          <path d="M-6.5 -1 C-7.5 4 -4 6.5 2 6.5 C8 6.5 10.5 4 9 0.5 C8 -2 6 -2.5 5 -2" fill={far ? c.shade : c.paw} {...S} />
+          <path d="M2 2.5 L2.5 6 M5.5 2 L6 6" fill="none" {...S} strokeWidth={0.9} />
+        </g>
+      </g>
+    </g>
+  );
+
+  const hindLeg = (k: 'hn' | 'hf', far: boolean): ReactNode => (
+    <g ref={set(`${k}Top`)}>
+      <g ref={set(`${k}Upper`)}>
+        <path d="M-15 -2 C-16 -14 -4 -20 6 -16 C16 -12 17 4 12 14 C8 21 -2 22 -8 16 C-13 11 -15 6 -15 -2 Z" fill={far ? c.shade : `url(#${grad})`} />
+        <path d="M6 -16 C16 -12 17 4 12 14 C8 21 -2 22 -8 16" fill="none" {...S} />
+      </g>
+      <g ref={set(`${k}Lower`)} >
+        <g ref={set(`${k}LowerShape`)}>
+          <path d="M-5 -3 L5 -3 L4.5 16 L-4.5 16 Z" fill={far ? c.shade : coat === 'tuxedo' ? c.paw : `url(#${grad})`} />
+          <path d="M-5 0 L-4.5 16 M5 0 L4.5 16" fill="none" {...S} />
+        </g>
+        <g>
+          <path d="M-5.5 -1 C-6.5 4 -3 6.5 3 6.5 C9 6.5 11 4 9.5 0.5 C8.5 -2 6 -2.5 4.5 -2" fill={far ? c.shade : c.paw} {...S} />
+          <path d="M3 2.5 L3.5 6 M6.5 2 L7 6" fill="none" {...S} strokeWidth={0.9} />
+        </g>
+      </g>
+    </g>
+  );
 
   return (
-    <button
-      type="button"
-      className="cat"
-      data-mood={mood}
-      data-tail={tailSway ? 'sway' : 'still'}
-      aria-label={label}
-      onClick={wake}
-    >
-      <svg viewBox="0 0 250 160" width="250" height="160" aria-hidden="true" focusable="false">
+    <button type="button" className={`cat cat-${coat}`} data-action={action} aria-label={label} onClick={onTap}>
+      <svg ref={svgRef} viewBox="0 0 220 150" width="220" height="150" aria-hidden="true" focusable="false">
         <defs>
-          <linearGradient id="catFur" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#efe0c6" />
-            <stop offset="1" stopColor="#dcc6a3" />
+          <linearGradient id={grad} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={c.fur} />
+            <stop offset="1" stopColor={c.shade} />
           </linearGradient>
-          <radialGradient id="catShadow" cx=".5" cy=".5" r=".5">
-            <stop offset="0" stopColor="#392a24" stopOpacity=".35" />
+          <radialGradient id={`${id}-shadow`} cx=".5" cy=".5" r=".5">
+            <stop offset="0" stopColor="#392a24" stopOpacity=".32" />
             <stop offset="1" stopColor="#392a24" stopOpacity="0" />
           </radialGradient>
-          <filter id="catWash" x="-5%" y="-5%" width="110%" height="110%">
-            <feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="8" />
-            <feDisplacementMap in="SourceGraphic" scale="3" xChannelSelector="R" yChannelSelector="G" />
-          </filter>
         </defs>
-        <ellipse cx="135" cy="146" rx="112" ry="12" fill="url(#catShadow)" />
-
-        <g className="cat-whole">
-          {/* tail, wrapping around the front */}
-          <g className="cat-tail">
+        <g ref={set('root')}>
+          <ellipse className="cat-shadow" cx="104" cy="142" rx="72" ry="7" fill={`url(#${id}-shadow)`} />
+          <g ref={set('body')}>
+            {hindLeg('hf', true)}
+            {frontLeg('ff', true)}
+            {/* body */}
             <path
-              d="M214 128 C232 140 222 152 190 152 C150 153 104 152 76 146 C60 142 52 134 60 128 C66 124 74 130 70 136"
-              fill="none"
-              stroke="#50372d"
-              strokeWidth="13"
-              strokeLinecap="round"
+              className="cat-hit"
+              d="M62 76 C82 63 122 63 140 69 C153 74 160 88 156 102 C152 113 136 116 120 114 C102 112 86 116 70 114 C54 112 45 98 49 86 C51 80 56 77 62 76 Z"
+              fill={`url(#${grad})`}
+              {...S}
+              strokeWidth={1.8}
             />
-            <path
-              d="M214 128 C232 140 222 152 190 152 C150 153 104 152 76 146 C60 142 52 134 60 128 C66 124 74 130 70 136"
-              fill="none"
-              stroke="url(#catFur)"
-              strokeWidth="10"
-              strokeLinecap="round"
-            />
-            <path
-              d="M196 146 l4 7 M176 147 l3 6 M156 147 l2 6 M136 147 l2 6 M116 146 l1 6 M96 145 l1 6 M78 141 l-1 6"
-              stroke="#50372d"
-              strokeWidth="1.2"
-              opacity=".55"
-              strokeLinecap="round"
-            />
-          </g>
-
-          {/* body */}
-          <path
-            d="M88 70 C104 50 150 44 186 54 C218 63 236 90 232 116 C229 136 212 146 186 146 L96 146 C74 146 60 138 58 124 C56 104 70 86 88 70 Z"
-            fill="url(#catFur)"
-            stroke="#50372d"
-            strokeWidth="1.8"
-            filter="url(#catWash)"
-          />
-          {/* tabby stripes & engraved hatching along the back */}
-          <g stroke="#50372d" fill="none" strokeLinecap="round">
-            <path d="M150 52 C146 62 147 70 152 76 M168 54 C163 64 164 73 170 80 M186 58 C180 68 181 78 188 86 M203 66 C196 76 197 86 205 94 M217 80 C211 88 212 98 219 104" strokeWidth="2.2" opacity=".5" />
-            <path
-              d="M120 58 l-4 6 M128 55 l-4 6 M136 53 l-4 6 M144 52 l-3 6 M158 52 l-3 7 M176 55 l-3 7 M194 61 l-3 7 M210 71 l-2 7 M222 84 l-1 7 M228 98 l0 7 M229 112 l-1 7"
-              strokeWidth="1"
-              opacity=".55"
-            />
-            <path d="M200 118 C206 112 214 112 220 118 M190 128 C198 121 210 121 218 128" strokeWidth="1" opacity=".45" />
-          </g>
-          {/* hind leg contour */}
-          <path d="M188 146 C172 140 168 120 182 108 C196 98 216 104 220 120" fill="none" stroke="#50372d" strokeWidth="1.5" opacity=".8" />
-
-          {/* front paws */}
-          <g className="cat-paws" stroke="#50372d" strokeWidth="1.6" fill="url(#catFur)">
-            <path d="M62 140 C58 132 66 126 78 127 L102 128 C110 129 112 140 104 143 L72 145 C66 145 63 143 62 140 Z" />
-            <path d="M90 143 C86 136 92 131 104 132 L126 133 C134 134 135 144 128 146 L98 147 C93 147 91 146 90 143 Z" />
-            <path d="M70 136 l0 6 M78 135 l0 7 M100 139 l0 6 M108 139 l0 7" strokeWidth="1" fill="none" />
-          </g>
-
-          {/* head */}
-          <g className="cat-head">
-            <g className="cat-ear cat-ear-l">
-              <path d="M44 66 L40 26 C40 22 44 21 47 23 L76 46 Z" fill="url(#catFur)" stroke="#50372d" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M48 56 L46 32 L66 47" fill="#f4dce1" stroke="#c88f9d" strokeWidth="1" />
+            {coat === 'tuxedo' && (
+              <path d="M136 92 C142 86 152 88 155 98 C153 108 142 113 128 113 C124 106 128 96 136 92 Z" fill={c.chest} />
+            )}
+            {c.stripe && (
+              <g stroke={c.stripe} strokeWidth="2.6" strokeLinecap="round" fill="none" opacity=".7">
+                <path d="M78 67 C76 74 78 80 82 84 M92 65 C90 72 92 79 96 83 M106 64 C104 71 106 78 110 82 M120 66 C118 72 120 79 124 83" />
+              </g>
+            )}
+            <g stroke={c.line} strokeWidth="1" opacity=".5" fill="none" strokeLinecap="round">
+              <path d="M70 70 l-2 5 M86 66 l-2 5 M100 65 l-2 5 M114 65 l-2 5 M128 67 l-2 5 M56 80 l-3 4 M52 92 l-3 3" />
             </g>
-            <g className="cat-ear cat-ear-r">
-              <path d="M88 44 L114 20 C117 18 121 19 120 23 L118 62 Z" fill="url(#catFur)" stroke="#50372d" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M96 45 L114 28 L113 54" fill="#f4dce1" stroke="#c88f9d" strokeWidth="1" />
-            </g>
-            <path
-              d="M80 40 C104 40 124 56 124 80 C124 104 104 118 80 118 C56 118 36 104 36 80 C36 56 56 40 80 40 Z"
-              fill="url(#catFur)"
-              stroke="#50372d"
-              strokeWidth="1.8"
-              filter="url(#catWash)"
-            />
-            {/* forehead stripes */}
-            <path d="M80 46 L80 58 M71 48 L73 59 M89 48 L87 59" stroke="#50372d" strokeWidth="1.8" opacity=".55" strokeLinecap="round" />
-            {/* cheek hatching */}
-            <path d="M44 92 l6 3 M42 98 l7 2 M116 92 l-6 3 M118 98 l-7 2" stroke="#50372d" strokeWidth="1" opacity=".5" strokeLinecap="round" />
-            {/* blush */}
-            <ellipse cx="56" cy="94" rx="8" ry="4" fill="#c88f9d" opacity=".35" />
-            <ellipse cx="104" cy="94" rx="8" ry="4" fill="#c88f9d" opacity=".35" />
-
-            {/* eyes: closed */}
-            <g className="cat-eyes-closed" stroke="#392a24" strokeWidth="2" fill="none" strokeLinecap="round">
-              <path d="M56 80 Q63 86 70 80" />
-              <path d="M90 80 Q97 86 104 80" />
-              <path d="M56 80 l-3 -2 M104 80 l3 -2" strokeWidth="1.3" />
-            </g>
-            {/* eyes: open */}
-            <g className="cat-eyes-open">
-              <path d="M54 80 Q63 70 72 80 Q63 88 54 80 Z" fill="#b69a69" stroke="#392a24" strokeWidth="1.6" />
-              <path d="M88 80 Q97 70 106 80 Q97 88 88 80 Z" fill="#b69a69" stroke="#392a24" strokeWidth="1.6" />
-              <ellipse className="cat-pupil" cx="63" cy="79.5" rx="2" ry="5" fill="#2a1a14" />
-              <ellipse className="cat-pupil" cx="97" cy="79.5" rx="2" ry="5" fill="#2a1a14" />
-              <circle cx="65" cy="77" r="1.2" fill="#fff" />
-              <circle cx="99" cy="77" r="1.2" fill="#fff" />
-            </g>
-            {/* nose & mouth */}
-            <path d="M76 90 L84 90 L80 95 Z" fill="#c88f9d" stroke="#794454" strokeWidth="1" strokeLinejoin="round" />
-            <path d="M80 95 C80 99 76 101 72 99 M80 95 C80 99 84 101 88 99" fill="none" stroke="#392a24" strokeWidth="1.3" strokeLinecap="round" />
-            {/* whiskers */}
-            <g stroke="#50372d" strokeWidth=".8" opacity=".7" strokeLinecap="round">
-              <path d="M60 96 L24 90 M60 99 L22 100 M61 102 L26 110" />
-              <path d="M100 96 L136 90 M100 99 L138 100 M99 102 L134 110" />
-            </g>
-            {/* dusty-pink ribbon collar with a little bow */}
-            <path d="M48 108 C62 118 98 118 112 108" fill="none" stroke="#c88f9d" strokeWidth="5" strokeLinecap="round" />
-            <path d="M48 108 C62 118 98 118 112 108" fill="none" stroke="#794454" strokeWidth=".8" opacity=".6" />
-            <g className="cat-bow" transform="translate(80 116)">
-              <path d="M0 0 C-6 -9 -18 -8 -16 1 C-14 8 -5 5 0 0 Z" fill="#c88f9d" stroke="#794454" strokeWidth="1" />
-              <path d="M0 0 C6 -9 18 -8 16 1 C14 8 5 5 0 0 Z" fill="#c88f9d" stroke="#794454" strokeWidth="1" />
-              <path d="M-1 1 L-6 13 M1 1 L7 12" stroke="#c88f9d" strokeWidth="3" strokeLinecap="round" />
-              <circle r="2.6" fill="#f4dce1" stroke="#794454" strokeWidth="1" />
+            {hindLeg('hn', false)}
+            {frontLeg('fn', false)}
+            {/* tail */}
+            <path ref={set('tailOutline')} fill="none" stroke={c.line} strokeWidth="11" strokeLinecap="round" />
+            <path ref={set('tailFill')} fill="none" stroke={c.fur} strokeWidth="7.6" strokeLinecap="round" />
+            {c.stripe && <path ref={set('tailStripe')} fill="none" stroke={c.stripe} strokeWidth="7.6" strokeDasharray="3 7" opacity=".6" />}
+            {/* head */}
+            <g ref={set('head')}>
+              <g ref={set('earFar')}>
+                <path d="M-1 -24 L2 -49 C2.5 -51 4.5 -51.5 6 -50 L18 -34 Z" fill={`url(#${grad})`} {...S} />
+                <path d="M3 -31 L4.5 -44 L12 -35" fill={c.innerEar} opacity=".85" />
+              </g>
+              <g ref={set('earNear')}>
+                <path d="M24 -36 L38 -51 C39.5 -52.5 41.5 -52 41.5 -50 L42 -24 Z" fill={`url(#${grad})`} {...S} />
+                <path d="M29 -35 L38.5 -45.5 L38.5 -31" fill={c.innerEar} opacity=".85" />
+              </g>
+              <path
+                className="cat-hit"
+                d="M-6 -6 C-8 -24 6 -37 20 -37 C35 -37 46 -25 45 -9 C44 4 33 11 19 11 C5 11 -4 5 -6 -6 Z"
+                fill={`url(#${grad})`}
+                {...S}
+                strokeWidth={1.8}
+              />
+              {coat === 'tuxedo' && (
+                <path d="M21 -26 C17 -18 14 -12 13 -6 C13 3 18 8 22 8 C27 8 32 3 31 -6 C30 -12 26 -18 21 -26 Z" fill={c.chest} />
+              )}
+              {c.stripe && (
+                <path d="M20 -35 L20 -27 M13 -33 L15 -26 M27 -33 L25 -26" stroke={c.stripe} strokeWidth="2" strokeLinecap="round" opacity=".75" />
+              )}
+              <ellipse cx="6" cy="-3" rx="5.5" ry="2.6" fill="#c88f9d" opacity=".3" />
+              <ellipse cx="37" cy="-3" rx="5.5" ry="2.6" fill="#c88f9d" opacity=".3" />
+              {/* eyes */}
+              {[0, 1].map((i) => (
+                <g key={i} ref={set(`eye${i}`)}>
+                  <path d="M-5.2 0 Q0 -5.4 5.2 0 Q0 4.2 -5.2 0 Z" fill={c.iris} stroke={c.line} strokeWidth="1.3" />
+                  <ellipse ref={set(`pupil${i}`)} cx="0" cy="0" rx="1.3" ry="3.4" fill="#1d1310" />
+                  <circle cx="1.6" cy="-1.8" r="1" fill="#fff" />
+                </g>
+              ))}
+              <g ref={set('eyesClosed')} stroke={c.line} strokeWidth="1.8" fill="none" strokeLinecap="round" opacity="0">
+                <path d="M7 -16 Q12 -12 17 -16 M24 -16 Q29 -12 34 -16" />
+              </g>
+              {/* nose and mouth */}
+              <path d="M19.4 -8 L24.6 -8 L22 -5 Z" fill={c.nose} stroke={coat === 'tuxedo' ? '#794454' : c.line} strokeWidth=".8" strokeLinejoin="round" />
+              <path ref={set('mouthClosed')} d="M22 -5 C22 -2.5 19.5 -1 17 -2 M22 -5 C22 -2.5 24.5 -1 27 -2" fill="none" stroke={c.line} strokeWidth="1.1" strokeLinecap="round" />
+              <g ref={set('mouthOpen')} opacity="0">
+                <ellipse cx="0" cy="2.5" rx="4.6" ry="6" fill="#5e2232" stroke={c.line} strokeWidth="1" />
+                <ellipse cx="0" cy="5.6" rx="3" ry="2.4" fill="#d98a9a" />
+                <path d="M-2.6 -1.5 L-2 0.6 M2.6 -1.5 L2 0.6" stroke="#fff" strokeWidth=".9" />
+              </g>
+              <g ref={set('tongue')} opacity="0">
+                <path d="M-2.6 0 C-2.6 4 -1.6 6.5 0 6.5 C1.6 6.5 2.6 4 2.6 0 Z" fill="#e79aa8" stroke="#794454" strokeWidth=".6" />
+              </g>
+              {/* whiskers */}
+              <g stroke={coat === 'tuxedo' ? '#efe6d6' : c.line} strokeWidth=".7" opacity=".75" strokeLinecap="round">
+                <path d="M12 -4 L-12 -9 M12 -2 L-13 -1 M13 0 L-10 6 M32 -4 L56 -9 M32 -2 L57 -1 M31 0 L54 6" />
+              </g>
+              {/* ribbon collar */}
+              <path d="M2 4 C10 12 30 12 39 4" fill="none" stroke={c.ribbon} strokeWidth="4.2" strokeLinecap="round" />
+              <path d="M2 4 C10 12 30 12 39 4" fill="none" stroke={c.ribbonDark} strokeWidth=".7" opacity=".55" />
+              <g transform="translate(21 11)">
+                {c.bell ? (
+                  <>
+                    <circle cy="3" r="3.6" fill={c.bell} stroke="#6b5530" strokeWidth=".8" />
+                    <path d="M-2 4 L2 4" stroke="#6b5530" strokeWidth=".8" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M0 0 C-5 -7 -14 -6 -13 1 C-11 6 -4 4 0 0 Z" fill={c.ribbon} stroke={c.ribbonDark} strokeWidth=".9" />
+                    <path d="M0 0 C5 -7 14 -6 13 1 C11 6 4 4 0 0 Z" fill={c.ribbon} stroke={c.ribbonDark} strokeWidth=".9" />
+                    <path d="M-1 1 L-5 10 M1 1 L6 9" stroke={c.ribbon} strokeWidth="2.4" strokeLinecap="round" />
+                    <circle r="2.2" fill="#f4dce1" stroke={c.ribbonDark} strokeWidth=".8" />
+                  </>
+                )}
+              </g>
             </g>
           </g>
         </g>
       </svg>
-      {hearts.map((id) => (
-        <span key={id} className="cat-heart" aria-hidden="true">
-          <svg viewBox="0 0 20 18" width="16" height="15">
-            <path d="M10 17 C4 12 1 9 1 5.5 C1 3 3 1 5.5 1 C7.5 1 9 2.3 10 4 C11 2.3 12.5 1 14.5 1 C17 1 19 3 19 5.5 C19 9 16 12 10 17 Z" fill="#c88f9d" />
-          </svg>
-        </span>
-      ))}
     </button>
   );
-}
+});
+
+export default CatCompanion;
+export { POSES };

@@ -20,7 +20,8 @@ A private, single-page diary that feels like an antique scholar's writing desk: 
 - **Saves locally**, automatically (debounced ~300 ms, flushed on blur/page hide) into one versioned LocalStorage document. Reloads restore text, title and settings immediately — no replay.
 - **Exports:** *Save as PDF* (print dialog, paginated, handwriting font, parchment background, title/date/dedication), plain text (exact text), and a versioned JSON backup that can be imported again after validation and confirmation.
 - **Ink colours:** sepia, iron-gall black, burgundy rose — recolours existing writing; fresh ink dries from a wet tone.
-- **Romance & cat:** dedication in the masthead, a pressed rose and petals, a paw print and heart in the margin, a heart-shaped wax seal that opens a hidden note, and a cat that wakes, blinks, stretches and settles when tapped (tail drifts now and then).
+- **Romance:** dedication in the masthead, a pressed rose and petals, a paw print and heart in the margin, and a heart-shaped wax seal that opens a hidden note.
+- **Two cats on the desk** — a cream tabby with a dusty-pink ribbon and a little tuxedo with a burgundy ribbon and bell — drawn as jointed line-art puppets and run by a small behaviour director modelled on real cat behaviour: sleeping curled up, loafing, slow "cat-kiss" blinks, kneading ("making biscuits"), licking a paw and washing the face, yawning, the play-bow and hind-leg stretch, ear twitches, tail swishes, head tilts, batting a paw, the butt-wiggle pounce, strolling along the desk, walking over to nuzzle each other (a heart rises), grooming each other and curling up to nap together. They breathe, blink and follow the quill with their eyes. Tap a cat (or focus it and press Enter) to wake her or say hello. While you are typing they only do calm, in-place things and never walk across the page; with reduced motion they hold still.
 - **Respectful by default:** sound is off until you turn it on; reduced-motion users get instant ink; everything can be muted or calmed.
 
 ## Privacy
@@ -69,7 +70,7 @@ Real form controls with visible focus, a skip link to the page, named buttons (i
 ## Tests
 
 - **Unit (Vitest, 18 tests):** text diff (incl. randomized round-trips and surrogate pairs), grapheme segmentation, glyph coverage and stroke data, document/backup validation and sanitising, preferences.
-- **Browser (Playwright, Chromium, 25 tests):** acceptance tests A01–A12 + A14 — nib tracking during writing, exact text after fast typing / 1,000+ character paste / mid-text edits / undo / redo, line returns without connecting ink, resize while writing, phone layout, IME composition, reload without replay, storage-full and corrupt-data handling, exact `.txt`/`.json` exports, paginated print/PDF, validated import with confirmation, new-page confirmation with backup, cross-tab conflict, cat & wax seal, sound opt-in and mute, reduced motion, keyboard-only use and accessible names, no network leakage, and screenshots at 360/390/768/1024/1440 px with overflow checks. Every writing test ends with an engine **audit** that re-measures the layout and checks each grapheme has exactly one correctly placed glyph.
+- **Browser (Playwright, Chromium, 27 tests):** acceptance tests A01–A12 + A14 — nib tracking during writing, exact text after fast typing / 1,000+ character paste / mid-text edits / undo / redo, line returns without connecting ink, resize while writing, phone layout, IME composition, reload without replay, storage-full and corrupt-data handling, exact `.txt`/`.json` exports, paginated print/PDF, validated import with confirmation, new-page confirmation with backup, cross-tab conflict, both cats reacting to tap/Enter, the cats' full repertoire, cats staying calm while typing and never blocking the page, wax seal, sound opt-in and mute, reduced motion, keyboard-only use and accessible names, no network leakage, and screenshots at 360/390/768/1024/1440 px with overflow checks. Every writing test ends with an engine **audit** that re-measures the layout and checks each grapheme has exactly one correctly placed glyph.
 
 Only Chromium is automated here; Safari/Firefox and real mobile keyboards should be spot-checked by hand.
 
@@ -80,7 +81,8 @@ src/
   App.tsx                    composition, dialogs, exports, preferences
   config/journalConfig.ts    personal content (name, dedication, love note)
   handwriting/               engine, glyph data, diff, graphemes
-  components/                DeskScene, NotebookEditor, Quill, Inkpot, CatCompanion,
+  cats/                      cat rig (poses), behaviour director, action key poses
+  components/                DeskScene, NotebookEditor, Quill, Inkpot, CatsLayer, CatCompanion,
                              WaxSeal, Dedication, Toolbar, Modal, PrintSheet, Icons
   hooks/useJournalStorage.ts versioned LocalStorage document
   lib/                       exportJournal, journalDocument, preferences, sound

@@ -12,6 +12,7 @@ import DeskScene from './components/DeskScene';
 import Quill, { type QuillHandle } from './components/Quill';
 import type { InkpotHandle } from './components/Inkpot';
 import Toolbar from './components/Toolbar';
+import CatsLayer from './components/CatsLayer';
 import Modal from './components/Modal';
 import Dedication from './components/Dedication';
 import PrintSheet from './components/PrintSheet';
@@ -44,6 +45,8 @@ export default function App() {
   const quillRef = useRef<QuillHandle>(null);
   const inkpotRef = useRef<InkpotHandle>(null);
   const lastPose = useRef<QuillPose | null>(null);
+  const quillClient = useRef<{ x: number; y: number; active: boolean } | null>(null);
+  const lastTyped = useRef(-1e9);
 
   const instant = prefs.motion === 'instant' || (prefs.motion === 'auto' && reduced);
   const today = useMemo(() => formatDate(new Date()), []);
@@ -117,6 +120,7 @@ export default function App() {
     const y = cr.top + pose.y;
     const inside = y > sr.top - 6 && y < sr.bottom + 6 && x > sr.left - 30 && x < sr.right + 60;
     q.place(pose, x, y, inside || pose.state === 'dipping');
+    quillClient.current = { x, y, active: pose.state !== 'resting' && inside };
     inkpotRef.current?.setDipping(pose.state === 'dipping' && pose.lift < 0.3);
   }, []);
 
@@ -304,7 +308,6 @@ export default function App() {
           inkpotRef={inkpotRef}
           ambience={prefs.ambience && !reduced}
           onSeal={journalConfig.loveNote.enabled ? () => setDialog('note') : undefined}
-          onCat={() => sound.purr()}
         >
           <NotebookEditor
             ref={editorRef}
@@ -314,7 +317,10 @@ export default function App() {
               setTitle(t);
               store.update({ title: t });
             }}
-            onTextChange={(text) => store.update({ text })}
+            onTextChange={(text) => {
+              lastTyped.current = performance.now();
+              store.update({ text });
+            }}
             onBlur={store.flush}
             instant={instant}
             dipping={!instant}
@@ -340,6 +346,13 @@ export default function App() {
             setBackedUp(false);
             setDialog('new');
           }}
+        />
+
+        <CatsLayer
+          reducedMotion={reduced}
+          lastTyped={() => lastTyped.current}
+          quill={() => quillClient.current}
+          onSound={(k) => (k === 'purr' ? sound.purr() : sound.chirp())}
         />
 
         <div className="quill-layer" aria-hidden="true">

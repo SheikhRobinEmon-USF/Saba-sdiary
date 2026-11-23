@@ -90,6 +90,36 @@ class SoundBoard {
     p.stop(now + 0.22);
   }
 
+  /** A short trilled "mrrp?" — the greeting of a cat that was just woken. */
+  chirp(): void {
+    if (!this.enabled) return;
+    const ctx = this.ensure();
+    if (!ctx || !this.master) return;
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(520, now);
+    o.frequency.exponentialRampToValueAtTime(880, now + 0.09);
+    o.frequency.exponentialRampToValueAtTime(700, now + 0.2);
+    const trill = ctx.createOscillator();
+    trill.frequency.value = 32;
+    const trillGain = ctx.createGain();
+    trillGain.gain.value = 40;
+    trill.connect(trillGain).connect(o.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.06, now + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1800;
+    o.connect(lp).connect(g).connect(this.master);
+    o.start(now);
+    trill.start(now);
+    o.stop(now + 0.26);
+    trill.stop(now + 0.26);
+  }
+
   purr(): void {
     if (!this.enabled) return;
     const ctx = this.ensure();

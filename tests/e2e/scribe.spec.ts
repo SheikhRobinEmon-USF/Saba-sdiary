@@ -309,21 +309,61 @@ test.describe('storage, export and backup', () => {
 });
 
 test.describe('scene, sound, motion and accessibility', () => {
-  test('A07 the cat wakes gracefully and the dedication shows; neither touches the text', async ({ page }) => {
+  test('A07 two cats live on the desk, react to a tap or Enter, and never touch the text', async ({ page }) => {
     await openDiary(page);
     await editor(page).click();
-    await page.keyboard.type('Hello cat');
+    await page.keyboard.type('Hello cats');
     await expect(page.locator('.dedication')).toContainText('a little place to keep the things that matter');
-    const cat = page.getByRole('button', { name: /sleeping cat/i });
-    await cat.click();
-    await expect(page.locator('.cat')).toHaveAttribute('data-mood', /waking|awake/);
-    await expect(page.locator('.cat')).toHaveAttribute('data-mood', 'asleep', { timeout: 8000 });
-    await expect(editor(page)).toHaveValue('Hello cat');
+    const cats = page.locator('.cats-layer .cat');
+    await expect(cats).toHaveCount(2);
+    for (const i of [0, 1]) {
+      const cat = cats.nth(i);
+      await expect(cat).toHaveAccessibleName(/Tap to say hello/);
+      const before = await cat.getAttribute('data-action');
+      await cat.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.cat-heart').first()).toBeVisible();
+      await expect.poll(() => cat.getAttribute('data-action')).not.toBe(before);
+    }
+    await expect(editor(page)).toHaveValue('Hello cats');
     // the wax seal opens the hidden note without changing the diary
     await page.getByRole('button', { name: /Wax seal/ }).click();
     await expect(page.getByRole('dialog', { name: /sealed in wax/ })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(editor(page)).toHaveValue('Hello cat');
+    await expect(editor(page)).toHaveValue('Hello cats');
+  });
+
+  test('cats perform their repertoire and stay on the desk lane', async ({ page }) => {
+    await openDiary(page);
+    for (const name of ['groom', 'knead', 'yawn', 'stretch', 'bat', 'pounce', 'wander', 'sleep']) {
+      await page.evaluate((n) => (window as unknown as { __cats: { perform(i: number, n: string): void } }).__cats.perform(1, n), name);
+      await page.waitForTimeout(250);
+      const info = await page.evaluate(() => (window as unknown as { __cats: { info(): { action: string; x: number }[] } }).__cats.info());
+      expect(info[1].action.length).toBeGreaterThan(3);
+      const vw = page.viewportSize()!.width;
+      expect(info[1].x).toBeGreaterThan(0);
+      expect(info[1].x).toBeLessThan(vw);
+    }
+  });
+
+  test('cats stay calm while someone is writing and never block the page', async ({ page }) => {
+    await openDiary(page);
+    await page.evaluate(() => (window as unknown as { __cats: { perform(i: number, n: string): void } }).__cats.perform(0, 'wander'));
+    await editor(page).click();
+    const walking: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.type('calm ', { delay: 30 });
+      const info = await page.evaluate(() => (window as unknown as { __cats: { info(): { action: string }[] } }).__cats.info());
+      walking.push(...info.map((c, k) => `${k}:${c.action}`).filter((a) => /walk|stroll|heading|pounc|stretch/.test(a)));
+    }
+    // a walk in progress is interrupted immediately; nothing energetic starts while typing
+    expect(walking.slice(2)).toEqual([]);
+    const hit = await page.evaluate(() => {
+      const ta = document.querySelector('#diary-text')!.getBoundingClientRect();
+      const el = document.elementFromPoint(ta.left + ta.width / 2, ta.top + 60);
+      return el?.id;
+    });
+    expect(hit).toBe('diary-text');
   });
 
   test('A08 sound starts only after opt-in and can be muted', async ({ page }) => {
@@ -362,6 +402,10 @@ test.describe('scene, sound, motion and accessibility', () => {
     expect(a.pending).toBe(0);
     expect(a.inked).toBe(inkableCount('Instant ink please'));
     await expect(page.locator('.ink-glyphs g.drawing')).toHaveCount(0);
+    // the cats hold still too
+    const catsBefore = await page.evaluate(() => (window as unknown as { __cats: { info(): unknown } }).__cats.info());
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => (window as unknown as { __cats: { info(): unknown } }).__cats.info())).toEqual(catsBefore);
   });
 
   test('A09 keyboard-only writing, saving and exporting; every control is named', async ({ page }) => {
